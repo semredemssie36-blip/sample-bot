@@ -19,8 +19,11 @@ model Player {
   // Cached Telegram handle (may be absent for users without a username).
   username String?
 
-  // The player's all-time best score across all game runs.
+  // The player's all-time best score across all Snake game runs.
   highScore Int @default(0)
+
+  // Total number of completed game runs (used on the leaderboard).
+  totalGames Int @default(0)
 
   // Automatically updated by Prisma via @updatedAt whenever the row changes.
   updatedAt DateTime @updatedAt

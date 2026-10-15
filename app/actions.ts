@@ -2,60 +2,62 @@
 
 import { prisma } from "@/lib/prisma";
 
-/**
- * Result returned by {@link syncPlayerAndScore}.
- */
-interface SyncResult {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface SyncResult {
   success: boolean;
   highScore: number;
+  totalGames: number;
   error?: string;
 }
 
+export interface LeaderboardEntry {
+  rank: number;
+  id: string;
+  username: string;
+  highScore: number;
+  totalGames: number;
+}
+
+// ─── syncPlayerAndScore ────────────────────────────────────────────────────────
+
 /**
- * Synchronise a Telegram player's identity and game score with the database.
+ * Upsert the player record and conditionally update their high score.
+ * Called on game boot (score=0, gameOver=false) to read the stored best,
+ * and on game-over (score=N, gameOver=true) to persist results.
  *
- * The function uses a Prisma `upsert` to guarantee the player row exists
- * (creating it on first launch with the incoming score, or caching their
- * latest Telegram handle on subsequent visits).  It then evaluates whether
- * the current run's score beats the stored all-time best and, if so,
- * updates the record accordingly.
- *
- * @param tgUserId     The Telegram user's numeric ID (used as the primary key).
- * @param username     The Telegram handle to cache (may be an empty string).
- * @param currentScore The score achieved in the current game run (0 on boot).
- *
- * @returns `{ success, highScore }` on success, or `{ success: false, error }` on failure.
+ * @param tgUserId     Telegram numeric user ID.
+ * @param username     Telegram handle to cache (may be empty string).
+ * @param currentScore Score from the finished run (0 on boot).
+ * @param gameOver     True only when a real run just ended.
  */
 export async function syncPlayerAndScore(
   tgUserId: number,
   username: string,
   currentScore: number,
+  gameOver = false,
 ): Promise<SyncResult> {
   try {
-    // The Prisma primary key is a String, so we cast the numeric Telegram ID.
     const id = String(tgUserId);
 
-    // Upsert ensures the player always exists after this call.
-    //   • On create: store the ID, cached handle, and current score as the
-    //     initial high score (a brand-new player's first run IS their best).
-    //   • On update: refresh the cached username so it stays current, but
-    //     leave highScore untouched — we evaluate it separately below.
+    // Upsert ensures the player row always exists after this call.
     const player = await prisma.player.upsert({
       where: { id },
       create: {
         id,
         username: username || null,
         highScore: currentScore,
+        totalGames: gameOver ? 1 : 0,
       },
       update: {
         username: username || null,
+        // Only increment game count when a real run ended.
+        ...(gameOver && { totalGames: { increment: 1 } }),
       },
     });
 
-    // Evaluate whether the current run beats the stored all-time best.
-    // This is a separate, conditional update so we never lower the high score.
+    // Evaluate whether this run beats the stored best.
     let finalHighScore = player.highScore;
-
     if (currentScore > player.highScore) {
       const updated = await prisma.player.update({
         where: { id },
@@ -64,13 +66,45 @@ export async function syncPlayerAndScore(
       finalHighScore = updated.highScore;
     }
 
-    return { success: true, highScore: finalHighScore };
-  } catch (error) {
-    console.error("[syncPlayerAndScore] Database error:", error);
     return {
-      success: false,
-      highScore: 0,
-      error: "Failed to sync player score to the database.",
+      success: true,
+      highScore: finalHighScore,
+      totalGames: player.totalGames + (gameOver ? 1 : 0),
     };
+  } catch (error) {
+    console.error("[syncPlayerAndScore] DB error:", error);
+    return { success: false, highScore: 0, totalGames: 0, error: String(error) };
+  }
+}
+
+// ─── getLeaderboard ────────────────────────────────────────────────────────────
+
+/**
+ * Returns the top-10 players ranked by highScore descending.
+ * Players without a username are shown as "Anonymous".
+ */
+export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
+  try {
+    const players = await prisma.player.findMany({
+      orderBy: { highScore: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        username: true,
+        highScore: true,
+        totalGames: true,
+      },
+    });
+
+    return players.map((p, i) => ({
+      rank: i + 1,
+      id: p.id,
+      username: p.username || "Anonymous",
+      highScore: p.highScore,
+      totalGames: p.totalGames,
+    }));
+  } catch (error) {
+    console.error("[getLeaderboard] DB error:", error);
+    return [];
   }
 }

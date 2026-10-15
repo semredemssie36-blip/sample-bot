@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased;
+    /* Prevent rubber-band / overscroll on mobile so the game stays fixed */
+    overscroll-behavior: none;
+    /* Remove the default tap highlight and long-press callout on mobile */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+}
+
+@layer utilities {
+  /* Floating "+1" score indicator */
+  @keyframes float-up {
+    0% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-60px) scale(1.4);
+    }
+  }
+
+  .animate-float-up {
+    animation: float-up 0.7s ease-out forwards;
+  }
+}

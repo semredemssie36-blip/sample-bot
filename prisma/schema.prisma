@@ -1,0 +1,30 @@
+// Prisma schema for the Telegram Mini App tap game.
+// Connection string is read from process.env.DATABASE_URL (see .env).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A Telegram player tracked by their unique Telegram user ID.
+model Player {
+  // The unique Telegram user ID, stored as a string so it doubles
+  // as the database primary key.
+  id String @id
+
+  // Cached Telegram handle (may be absent for users without a username).
+  username String?
+
+  // The player's all-time best score across all game runs.
+  highScore Int @default(0)
+
+  // Automatically updated by Prisma via @updatedAt whenever the row changes.
+  updatedAt DateTime @updatedAt
+
+  // Created timestamp for auditing (set once on insert).
+  createdAt DateTime @default(now())
+}

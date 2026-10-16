@@ -1,6 +1,3 @@
-// Prisma schema for the Telegram Mini App tap game.
-// Connection string is read from process.env.DATABASE_URL (see .env).
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,24 +7,173 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// A Telegram player tracked by their unique Telegram user ID.
-model Player {
-  // The unique Telegram user ID, stored as a string so it doubles
-  // as the database primary key.
-  id String @id
+// ─── Enums ────────────────────────────────────────────────────────────────────
 
-  // Cached Telegram handle (may be absent for users without a username).
-  username String?
+enum QuestType {
+  DAILY_CHECKIN
+  WATCH_AD
+  INVITE_FRIENDS
+  JOIN_CHANNEL
+  PLAY_GAME
+  SOCIAL_FOLLOW
+  SPONSORED
+}
 
-  // The player's all-time best score across all Snake game runs.
-  highScore Int @default(0)
+enum QuestDifficulty {
+  EASY
+  MEDIUM
+  HARD
+}
 
-  // Total number of completed game runs (used on the leaderboard).
-  totalGames Int @default(0)
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
 
-  // Automatically updated by Prisma via @updatedAt whenever the row changes.
-  updatedAt DateTime @updatedAt
+enum TransactionType {
+  QUEST_REWARD
+  REFERRAL_BONUS
+  STREAK_BONUS
+  AD_REWARD
+  WITHDRAWAL
+  ADMIN_GRANT
+}
 
-  // Created timestamp for auditing (set once on insert).
-  createdAt DateTime @default(now())
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+/// Core user record — one row per Telegram user.
+model User {
+  id          String   @id           // Telegram user ID as string
+  username    String?
+  firstName   String?
+  photoUrl    String?
+
+  // Economy
+  novaBalance Int      @default(0)   // spendable NOVA coins
+  totalEarned Int      @default(0)   // lifetime earnings (never decreases)
+  level       Int      @default(1)
+  xp          Int      @default(0)   // XP toward next level
+
+  // Referral
+  referralCode   String  @unique     // short code for invite link
+  referredBy     String?             // referralCode of the inviter
+
+  // TON wallet (set when user connects)
+  tonWallet   String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  userQuests   UserQuest[]
+  referrals    Referral[]   @relation("Referrer")
+  transactions Transaction[]
+  withdrawals  Withdrawal[]
+  streak       DailyStreak?
+}
+
+/// Quest definitions — seeded by admin, displayed to all users.
+model Quest {
+  id          String          @id @default(cuid())
+  title       String
+  description String
+  iconEmoji   String          @default("⚡")
+  type        QuestType
+  difficulty  QuestDifficulty @default(EASY)
+  minutesEst  Int             @default(5)  // estimated time
+
+  novaReward  Int             // NOVA coins awarded on completion
+  xpReward    Int             // XP awarded on completion
+
+  // For repeatable quests (e.g. DAILY_CHECKIN resets each day)
+  repeatable  Boolean         @default(false)
+  resetHours  Int             @default(24)
+
+  // Target for progress quests (e.g. invite 5 friends)
+  targetCount Int             @default(1)
+
+  // Sponsor metadata (optional)
+  sponsorName String?
+  sponsorUrl  String?
+
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+
+  userQuests  UserQuest[]
+}
+
+/// Tracks each user's progress on each quest.
+model UserQuest {
+  id          String   @id @default(cuid())
+  userId      String
+  questId     String
+  progress    Int      @default(0)   // current progress toward targetCount
+  completed   Boolean  @default(false)
+  completedAt DateTime?
+  claimedAt   DateTime?             // when reward was actually paid out
+
+  // Reset tracking for repeatable quests
+  lastReset   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+  quest       Quest    @relation(fields: [questId], references: [id])
+
+  @@unique([userId, questId])
+}
+
+/// Referral relationships.
+model Referral {
+  id           String   @id @default(cuid())
+  referrerId   String                        // User who shared the link
+  refereeId    String   @unique              // New user who joined via link
+  bonusPaid    Boolean  @default(false)      // Has referrer received NOVA bonus?
+  bonusAmount  Int      @default(500)        // NOVA paid to referrer per referral
+
+  createdAt    DateTime @default(now())
+
+  referrer     User     @relation("Referrer", fields: [referrerId], references: [id])
+}
+
+/// Daily login streak per user.
+model DailyStreak {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  currentStreak Int      @default(0)
+  longestStreak Int      @default(0)
+  lastClaimedAt DateTime?
+  nextClaimAt   DateTime?
+
+  user          User     @relation(fields: [userId], references: [id])
+}
+
+/// Full ledger of every NOVA movement (earned or spent).
+model Transaction {
+  id          String          @id @default(cuid())
+  userId      String
+  type        TransactionType
+  amount      Int             // positive = earn, negative = spend
+  description String
+  meta        Json?           // extra context (questId, refereeId, etc.)
+  createdAt   DateTime        @default(now())
+
+  user        User            @relation(fields: [userId], references: [id])
+}
+
+/// Withdrawal requests to TON wallet.
+model Withdrawal {
+  id          String           @id @default(cuid())
+  userId      String
+  novaAmount  Int              // NOVA being redeemed
+  tonAmount   Float            // equivalent TON (calculated at request time)
+  tonWallet   String           // destination wallet address
+  status      WithdrawalStatus @default(PENDING)
+  txHash      String?          // TON blockchain tx hash when paid
+  note        String?          // admin note on rejection
+
+  requestedAt DateTime         @default(now())
+  processedAt DateTime?
+
+  user        User             @relation(fields: [userId], references: [id])
 }

@@ -1,289 +1,237 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { retrieveLaunchParams } from "@telegram-apps/sdk-react";
-import { syncPlayerAndScore } from "./actions";
-import SnakeCanvas from "@/components/SnakeCanvas";
-import SwipeControls from "@/components/SwipeControls";
-import Leaderboard from "@/components/Leaderboard";
-import { useSnakeGame } from "@/hooks/useSnakeGame";
 
-// ─── Screen size helper ───────────────────────────────────────────────────────
+import BottomNav, { type Tab } from "@/components/BottomNav";
+import HomeScreen from "@/screens/HomeScreen";
+import QuestsScreen from "@/screens/QuestsScreen";
+import EarnScreen from "@/screens/EarnScreen";
+import RedeemScreen from "@/screens/RedeemScreen";
+import ProfileScreen from "@/screens/ProfileScreen";
 
-function useGameSize() {
-  const [size, setSize] = useState(320);
-  useEffect(() => {
-    const calc = () => {
-      // Leave room for header (~56px) + info bar (~48px) + controls region (~160px) + padding
-      const maxH = window.innerHeight - 56 - 48 - 160 - 24;
-      const maxW = window.innerWidth - 32;
-      setSize(Math.min(maxW, maxH, 360));
-    };
-    calc();
-    window.addEventListener("resize", calc);
-    return () => window.removeEventListener("resize", calc);
-  }, []);
-  return size;
+import { getUser, trackReferral, getReferralStats } from "@/app/actions";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface UserData {
+  id: string;
+  username?: string | null;
+  firstName?: string | null;
+  novaBalance: number;
+  totalEarned: number;
+  level: number;
+  xp: number;
+  xpForNext: number;
+  referralCode: string;
+  tonWallet?: string | null;
 }
 
-// ─── Level colour helper ──────────────────────────────────────────────────────
+interface StreakData {
+  currentStreak: number;
+  longestStreak: number;
+  canClaim: boolean;
+}
 
-const LEVEL_COLOURS = [
-  "text-neon-cyan",   // 1
-  "text-green-400",   // 2
-  "text-lime-400",    // 3
-  "text-yellow-400",  // 4
-  "text-orange-400",  // 5
-  "text-rose-400",    // 6
-  "text-pink-400",    // 7
-  "text-neon-purple", // 8
-];
+// ─── App ──────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [tab, setTab] = useState<Tab>("home");
+  const [userId, setUserId] = useState(0);
+  const [userData, setUserData] = useState<UserData | null>(null);
+  const [streakData, setStreakData] = useState<StreakData>({
+    currentStreak: 0,
+    longestStreak: 0,
+    canClaim: false,
+  });
+  const [referralCount, setReferralCount] = useState(0);
+  const [booting, setBooting] = useState(true);
+  const bootRef = useRef(false);
 
-export default function HomePage() {
-  // ── Telegram identity ──────────────────────────────────────────────
-  const [userId, setUserId]   = useState(0);
-  const [username, setUsername] = useState("");
-  const [highScore, setHighScore] = useState(0);
-  const [totalGames, setTotalGames] = useState(0);
-  const bootSynced = useRef(false);
-
-  // ── UI state ───────────────────────────────────────────────────────
-  const [screen, setScreen] = useState<"start" | "game" | "gameover" | "leaderboard">("start");
-  const [lastScore, setLastScore] = useState(0);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isNewBest, setIsNewBest] = useState(false);
-
-  const gameSize = useGameSize();
-
-  // ── Snake game engine ──────────────────────────────────────────────
-  const onDeath = useCallback(
-    async (score: number) => {
-      setLastScore(score);
-      setScreen("gameover");
-
-      if (!userId) return;
-      setIsSyncing(true);
-      try {
-        const res = await syncPlayerAndScore(userId, username, score, true);
-        if (res.success) {
-          setIsNewBest(score >= res.highScore && score > 0);
-          setHighScore(res.highScore);
-          setTotalGames(res.totalGames);
-        }
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [userId, username],
-  );
-
-  const [gameState, gameControls] = useSnakeGame(onDeath);
-
-  // ── Boot: parse Telegram identity + load stored high score ────────
+  // ── Boot: parse Telegram identity, create/fetch user ────────────────────
   useEffect(() => {
-    const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : undefined;
-    if (tg) { tg.ready(); tg.expand(); }
+    if (bootRef.current) return;
+    bootRef.current = true;
 
-    let parsedId = 0;
-    let parsedName = "";
+    // Tell Telegram the app is ready and expand to full height
+    if (typeof window !== "undefined") {
+      const tg = window.Telegram?.WebApp;
+      if (tg) { tg.ready(); tg.expand(); }
+    }
 
+    let tgId = 0;
+    let tgUsername = "";
+    let tgFirstName = "";
+    let startParam = "";
+
+    // Try SDK v3 first
     try {
       const lp = retrieveLaunchParams();
       const user = lp.tgWebAppData?.user;
-      if (user) { parsedId = user.id; parsedName = user.username ?? ""; }
-    } catch { /* not in Telegram */ }
+      if (user) {
+        tgId        = user.id;
+        tgUsername  = (user.username  as string | undefined) ?? "";
+        tgFirstName = (user.firstName as string | undefined) ?? "";
+      }
+      startParam = lp.tgWebAppStartParam ?? "";
+    } catch { /* outside Telegram */ }
 
-    if (!parsedId && tg?.initDataUnsafe?.user) {
-      parsedId = tg.initDataUnsafe.user.id;
-      parsedName = tg.initDataUnsafe.user.username ?? "";
+    // Fallback to legacy initDataUnsafe
+    if (!tgId && typeof window !== "undefined") {
+      const tg = window.Telegram?.WebApp;
+      if (tg?.initDataUnsafe?.user) {
+        tgId        = tg.initDataUnsafe.user.id;
+        tgUsername  = tg.initDataUnsafe.user.username  ?? "";
+        tgFirstName = tg.initDataUnsafe.user.first_name ?? "";
+      }
+      if (!startParam && tg?.initDataUnsafe?.start_param) {
+        startParam = tg.initDataUnsafe.start_param;
+      }
     }
 
-    setUserId(parsedId);
-    setUsername(parsedName);
+    // Dev fallback (preview in browser)
+    if (!tgId) tgId = 999999999;
 
-    if (!bootSynced.current && parsedId) {
-      bootSynced.current = true;
-      syncPlayerAndScore(parsedId, parsedName, 0, false).then((res) => {
-        if (res.success) {
-          setHighScore(res.highScore);
-          setTotalGames(res.totalGames);
-          gameControls.setHighScore(res.highScore);
-        }
+    setUserId(tgId);
+
+    // Fetch/create user + streak in parallel
+    Promise.all([
+      getUser(tgId, tgUsername, tgFirstName),
+      getReferralStats(tgId),
+    ]).then(([user, refStats]) => {
+      setUserData(user as UserData);
+      setReferralCount(refStats.count);
+
+      // Determine if daily streak is claimable
+      // The server action handles the 20h window — we just optimistically allow if
+      // totalEarned > 0 (first boot). Real validation is server-side.
+      setStreakData({
+        currentStreak: 0,   // updated via claimDailyStreak callback
+        longestStreak: 0,
+        canClaim: true,     // let server reject if already claimed
       });
-    }
-  }, [gameControls]);
 
-  // ── Derived ────────────────────────────────────────────────────────
-  const isGuest     = userId === 0;
-  const displayName = isGuest ? "Guest" : `@${username || "player"}`;
-  const levelColour = LEVEL_COLOURS[(gameState.level - 1) % LEVEL_COLOURS.length];
+      // If user arrived via referral link, track it
+      if (startParam && startParam !== user.referralCode) {
+        trackReferral(tgId, startParam).catch(() => {/* silent */});
+      }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────────────
-  return (
-    <main className="relative flex h-[100dvh] flex-col overflow-hidden bg-slate-950 text-slate-100 select-none">
+      setBooting(false);
+    });
+  }, []);
 
-      {/* Ambient glow */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(34,211,238,0.07),transparent_60%)]" />
+  // ── Global balance update helper ─────────────────────────────────────────
+  const handleBalanceUpdate = (delta: number) => {
+    setUserData((prev) =>
+      prev
+        ? {
+            ...prev,
+            novaBalance: Math.max(0, prev.novaBalance + delta),
+            totalEarned: delta > 0 ? prev.totalEarned + delta : prev.totalEarned,
+          }
+        : prev
+    );
+  };
 
-      {/* ── Header ──────────────────────────────────────────────────── */}
-      <header className="relative z-10 flex shrink-0 items-center justify-between px-5 pt-4 pb-2">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-neon-blue to-neon-cyan">
-            <svg viewBox="0 0 24 24" className="h-4 w-4 text-white" fill="currentColor" aria-hidden="true">
-              <path d="M13 2L4.5 12.5h7L9 22l9-11h-7L13 2z"/>
-            </svg>
+  // ── Streak claimed ────────────────────────────────────────────────────────
+  const handleStreakClaimed = (bonus: number, newStreak: number) => {
+    handleBalanceUpdate(bonus);
+    setStreakData((prev) => ({
+      ...prev,
+      currentStreak: newStreak,
+      longestStreak: Math.max(newStreak, prev.longestStreak),
+      canClaim: false,
+    }));
+  };
+
+  // ── Loading splash ────────────────────────────────────────────────────────
+  if (booting || !userData) {
+    return (
+      <div className="flex h-[100dvh] flex-col items-center justify-center bg-nova-bg gap-4">
+        {/* Animated logo */}
+        <div className="relative flex h-20 w-20 items-center justify-center">
+          <div className="absolute inset-0 rounded-3xl bg-nova-gradient opacity-20 animate-pulse-glow" />
+          <div className="relative rounded-3xl bg-nova-gradient p-0.5">
+            <div className="flex h-full w-full items-center justify-center rounded-[calc(1.5rem-2px)] bg-nova-card px-4 py-4">
+              <span className="text-3xl" aria-hidden="true">🪙</span>
+            </div>
           </div>
-          <span className="text-xs font-bold tracking-widest text-slate-300 uppercase">Snake Arcade</span>
         </div>
-        <div className="text-right">
-          <p className="text-[0.6rem] text-slate-500 uppercase tracking-wider">Player</p>
-          <p className="text-xs font-semibold text-slate-300">{displayName}</p>
+        <div className="text-center">
+          <p className="text-xl font-black text-white tracking-tight">NovaDrop</p>
+          <p className="text-xs text-nova-muted mt-1">Loading your wallet…</p>
         </div>
-      </header>
-
-      {/* ── Info bar (score / level / best) ─────────────────────────── */}
-      <div className="relative z-10 shrink-0 grid grid-cols-3 gap-2 px-5 pb-2">
-        <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2">
-          <p className="text-[0.6rem] text-slate-500 uppercase tracking-wider">Score</p>
-          <p className="text-lg font-extrabold tabular-nums text-neon-blue leading-none">
-            {screen === "game" ? gameState.score : lastScore}
-          </p>
-        </div>
-        <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2">
-          <p className="text-[0.6rem] text-slate-500 uppercase tracking-wider">Level</p>
-          <p className={`text-lg font-extrabold tabular-nums leading-none ${levelColour}`}>
-            {screen === "game" ? gameState.level : 1}
-          </p>
-        </div>
-        <div className="rounded-xl border border-neon-gold/15 bg-neon-gold/5 px-3 py-2">
-          <p className="text-[0.6rem] text-slate-500 uppercase tracking-wider">Best</p>
-          <p className="text-lg font-extrabold tabular-nums text-neon-gold leading-none">
-            {highScore}
-          </p>
+        <div className="flex gap-1.5 mt-2">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-1.5 w-1.5 rounded-full bg-nova-violet animate-bounce-light"
+              style={{ animationDelay: `${i * 0.15}s` }}
+            />
+          ))}
         </div>
       </div>
+    );
+  }
 
-      {/* ── Canvas area ─────────────────────────────────────────────── */}
-      <div className="relative z-10 flex flex-1 flex-col items-center justify-start pt-1 px-5">
-        <div
-          className="relative rounded-2xl overflow-hidden"
-          style={{ width: gameSize, height: gameSize }}
-        >
-          {/* Always render canvas so it's ready */}
-          <SnakeCanvas
-            snake={gameState.snake}
-            food={gameState.food}
-            phase={gameState.phase}
-            sizePx={gameSize}
+  // ── Main app ──────────────────────────────────────────────────────────────
+  return (
+    <main className="relative flex h-[100dvh] flex-col overflow-hidden bg-nova-bg text-white">
+      {/* Ambient background glow */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        aria-hidden="true"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 40% at 50% 0%, rgba(124,58,237,0.12) 0%, transparent 70%)",
+        }}
+      />
+
+      {/* Scrollable screen area */}
+      <div className="relative flex-1 overflow-y-auto overflow-x-hidden no-scrollbar">
+        {tab === "home" && (
+          <HomeScreen
+            userId={userId}
+            userData={userData}
+            streakData={streakData}
+            onBalanceUpdate={handleBalanceUpdate}
+            onStreakClaimed={handleStreakClaimed}
+            onNavigateRedeem={() => setTab("redeem")}
+            onNavigateQuests={() => setTab("quests")}
           />
-
-          {/* Swipe + D-pad overlay — only active during gameplay */}
-          {screen === "game" && (
-            <SwipeControls onDirection={gameControls.changeDirection} />
-          )}
-
-          {/* ── Start screen overlay ───────────────────────────────── */}
-          {screen === "start" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/85 backdrop-blur-sm animate-fade-in rounded-2xl">
-              <div className="text-5xl mb-3">🐍</div>
-              <h1 className="text-2xl font-extrabold tracking-widest text-white uppercase mb-1">
-                Snake
-              </h1>
-              <p className="text-xs text-slate-400 mb-6 text-center px-6">
-                Eat food to grow. Don&apos;t hit the walls or yourself.
-              </p>
-              <button
-                onClick={() => { setScreen("game"); setIsNewBest(false); gameControls.startGame(); }}
-                className="rounded-2xl bg-gradient-to-r from-neon-blue to-neon-cyan px-8 py-3 text-sm font-bold uppercase tracking-wider text-white shadow-lg shadow-neon-blue/30 active:scale-95 transition-transform"
-              >
-                Play Now
-              </button>
-              {!isGuest && totalGames > 0 && (
-                <p className="mt-3 text-xs text-slate-500">{totalGames} games played</p>
-              )}
-            </div>
-          )}
-
-          {/* ── Game-over overlay ──────────────────────────────────── */}
-          {screen === "gameover" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-sm animate-fade-in rounded-2xl px-6">
-              <div className="text-4xl mb-2">💀</div>
-              <h2 className="text-xl font-extrabold tracking-widest text-white uppercase mb-1">
-                Game Over
-              </h2>
-
-              {/* Score */}
-              <div className="my-3 text-center">
-                <p className="text-4xl font-black tabular-nums text-neon-blue">
-                  {lastScore}
-                </p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {isNewBest ? "🎉 New best score!" : `Best: ${highScore}`}
-                </p>
-              </div>
-
-              {isSyncing ? (
-                <div className="flex items-center gap-2 text-xs text-slate-400 mb-4">
-                  <span className="h-3 w-3 animate-spin rounded-full border border-white/20 border-t-neon-cyan"/>
-                  Saving…
-                </div>
-              ) : (
-                <div className="mb-4 h-4" />
-              )}
-
-              <div className="flex gap-3 w-full">
-                <button
-                  onClick={() => { setScreen("game"); setIsNewBest(false); gameControls.startGame(); }}
-                  className="flex-1 rounded-2xl bg-gradient-to-r from-neon-blue to-neon-cyan py-3 text-sm font-bold uppercase tracking-wider text-white active:scale-95 transition-transform"
-                >
-                  Retry
-                </button>
-                <button
-                  onClick={() => setScreen("leaderboard")}
-                  className="flex-1 rounded-2xl border border-neon-gold/30 bg-neon-gold/10 py-3 text-sm font-bold uppercase tracking-wider text-neon-gold active:scale-95 transition-transform"
-                >
-                  Scores
-                </button>
-              </div>
-
-              <button
-                onClick={() => setScreen("start")}
-                className="mt-2 text-xs text-slate-500 underline underline-offset-2"
-              >
-                Main menu
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Bottom bar ──────────────────────────────────────────────── */}
-      <div className="relative z-10 shrink-0 px-5 pb-5 pt-2">
-        {screen === "game" ? (
-          <p className="text-center text-[0.65rem] text-slate-600">
-            Swipe or use D-pad · {gameState.level < 8 ? `Level ${gameState.level} — eat ${5 - ((gameState.snake.length - 3) % 5)} more to level up` : "MAX SPEED 🔥"}
-          </p>
-        ) : (
-          <button
-            onClick={() => setScreen("leaderboard")}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-semibold text-slate-300 active:scale-95 transition-transform"
-          >
-            <span>🏆</span> Global Leaderboard
-          </button>
+        )}
+        {tab === "quests" && (
+          <QuestsScreen
+            userId={userId}
+            onBalanceUpdate={handleBalanceUpdate}
+          />
+        )}
+        {tab === "earn" && (
+          <EarnScreen
+            userId={userId}
+            referralCode={userData.referralCode}
+            referralCount={referralCount}
+            onBalanceUpdate={handleBalanceUpdate}
+          />
+        )}
+        {tab === "redeem" && (
+          <RedeemScreen
+            userId={userId}
+            novaBalance={userData.novaBalance}
+            onBalanceUpdate={handleBalanceUpdate}
+          />
+        )}
+        {tab === "profile" && (
+          <ProfileScreen
+            userId={userId}
+            userData={userData}
+            streakData={streakData}
+          />
         )}
       </div>
 
-      {/* ── Leaderboard overlay ─────────────────────────────────────── */}
-      {screen === "leaderboard" && (
-        <Leaderboard
-          currentUserId={String(userId)}
-          onClose={() => setScreen(lastScore > 0 ? "gameover" : "start")}
-        />
-      )}
+      {/* Bottom navigation */}
+      <BottomNav active={tab} onChange={setTab} />
     </main>
   );
 }

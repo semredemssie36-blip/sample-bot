@@ -3,10 +3,10 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Tap Arcade — Telegram Mini App",
+  title: "NovaDrop — Earn NOVA, Withdraw TON",
   description:
-    "A futuristic neon tap-to-score game built as a Telegram Mini App.",
-  applicationName: "Tap Arcade",
+    "Complete quests, invite friends, watch ads and earn NOVA coins. Withdraw real TON directly to your wallet.",
+  applicationName: "NovaDrop",
 };
 
 export const viewport: Viewport = {
@@ -15,7 +15,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#0a0a0f",
+  themeColor: "#0d0b1a",
 };
 
 export default function RootLayout({

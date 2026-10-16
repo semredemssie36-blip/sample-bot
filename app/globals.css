@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Google Font: Inter ───────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
 @layer base {
   html {
     color-scheme: dark;
@@ -9,30 +12,64 @@
   }
 
   body {
-    @apply bg-slate-950 text-slate-100 antialiased;
-    /* Prevent rubber-band / overscroll on mobile so the game stays fixed */
+    background-color: #0d0b1a;
+    color: #f1f0ff;
+    font-family: Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     overscroll-behavior: none;
-    /* Remove the default tap highlight and long-press callout on mobile */
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
     user-select: none;
   }
+
+  /* Safe area padding for iOS notch / home bar */
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 12px);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+@layer components {
+  /* ── Card base ────────────────────────────────────────────────────────── */
+  .nova-card {
+    @apply rounded-2xl border border-nova-border bg-nova-card;
+  }
+
+  /* ── Primary gradient button ──────────────────────────────────────────── */
+  .nova-btn {
+    @apply rounded-2xl bg-nova-gradient px-6 py-3 text-sm font-bold text-white
+           shadow-lg shadow-nova-purple/30 active:scale-95 transition-all duration-150;
+  }
+
+  /* ── Ghost button ─────────────────────────────────────────────────────── */
+  .nova-btn-ghost {
+    @apply rounded-2xl border border-nova-border bg-white/5 px-6 py-3
+           text-sm font-semibold text-nova-violet active:scale-95 transition-all duration-150;
+  }
+
+  /* ── Coin badge ───────────────────────────────────────────────────────── */
+  .nova-coin {
+    @apply inline-flex items-center gap-1 font-bold text-nova-gold;
+  }
 }
 
 @layer utilities {
-  /* Floating "+1" score indicator */
-  @keyframes float-up {
-    0% {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-    100% {
-      opacity: 0;
-      transform: translateY(-60px) scale(1.4);
-    }
+  /* Subtle shimmer for skeleton loading */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(255,255,255,0.03) 25%,
+      rgba(255,255,255,0.08) 50%,
+      rgba(255,255,255,0.03) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.8s linear infinite;
   }
 
-  .animate-float-up {
-    animation: float-up 0.7s ease-out forwards;
-  }
+  /* Hide scrollbar but allow scroll */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 }

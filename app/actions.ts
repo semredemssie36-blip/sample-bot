@@ -112,6 +112,8 @@ export async function getQuests(tgUserId: number) {
       targetCount: q.targetCount,
       progress: uq?.progress || 0,
       completed: uq?.completed || false,
+      channelUsername: q.channelUsername ?? null,
+      channelUrl: q.channelUrl ?? null,
     };
   });
 }
@@ -134,6 +136,29 @@ export async function completeQuest(tgUserId: number, questId: string) {
     userQuest = await prisma.userQuest.create({
       data: { userId: id, questId, progress: 0 },
     });
+  }
+
+  // For repeatable quests, check if reset window has passed
+  if (userQuest.completed && quest.repeatable) {
+    const hoursSinceReset =
+      (Date.now() - new Date(userQuest.lastReset).getTime()) / (1000 * 60 * 60);
+    if (hoursSinceReset >= quest.resetHours) {
+      // Reset this user's quest progress
+      await prisma.userQuest.update({
+        where: { id: userQuest.id },
+        data: {
+          progress:    0,
+          completed:   false,
+          completedAt: null,
+          claimedAt:   null,
+          lastReset:   new Date(),
+        },
+      });
+      userQuest = { ...userQuest, progress: 0, completed: false };
+    } else {
+      const hoursLeft = Math.ceil(quest.resetHours - hoursSinceReset);
+      return { success: false, error: `Quest resets in ${hoursLeft}h` };
+    }
   }
 
   if (userQuest.completed && !quest.repeatable) {
@@ -380,4 +405,54 @@ export async function getReferralStats(tgUserId: number) {
   const count = await prisma.referral.count({ where: { referrerId: id } });
   const totalEarned = count * 500; // 500 NOVA per referral
   return { count, totalEarned };
+}
+
+// ─── getStreakData ────────────────────────────────────────────────────────────
+
+export async function getStreakData(tgUserId: number) {
+  const id = String(tgUserId);
+  
+  let streak = await prisma.dailyStreak.findUnique({ where: { userId: id } });
+  if (!streak) {
+    streak = await prisma.dailyStreak.create({ data: { userId: id } });
+  }
+
+  const now = new Date();
+  const lastClaim = streak.lastClaimedAt;
+  
+  // Can claim if: never claimed OR last claim was >20h ago
+  const canClaim = !lastClaim || (now.getTime() - lastClaim.getTime()) >= 20 * 60 * 60 * 1000;
+  
+  return {
+    currentStreak: streak.currentStreak,
+    longestStreak: streak.longestStreak,
+    canClaim,
+  };
+}
+
+// ─── verifyChannelMembership ──────────────────────────────────────────────────
+
+export async function verifyChannelMembership(tgUserId: number, channelUsername: string) {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  if (!BOT_TOKEN) return { success: false, error: "Bot token not configured" };
+
+  try {
+    const chatId = channelUsername.startsWith("@") ? channelUsername : `@${channelUsername}`;
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${tgUserId}`;
+    
+    const res = await fetch(url);
+    const data = await res.json();
+    
+    if (!data.ok) {
+      return { success: false, error: "Unable to verify membership" };
+    }
+    
+    const status = data.result?.status;
+    const isMember = ["member", "administrator", "creator"].includes(status);
+    
+    return { success: true, isMember };
+  } catch (err) {
+    console.error("[verifyChannelMembership] error:", err);
+    return { success: false, error: "Verification failed" };
+  }
 }

@@ -98,6 +98,10 @@ model Quest {
   sponsorName String?
   sponsorUrl  String?
 
+  // Channel/Group verification (for JOIN_CHANNEL / JOIN_GROUP quests)
+  channelUsername String?   // e.g. "novadroptg" — used with getChatMember API
+  channelUrl      String?   // full t.me link shown to the user
+
   active      Boolean         @default(true)
   createdAt   DateTime        @default(now())
 

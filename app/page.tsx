@@ -6,11 +6,12 @@ import { retrieveLaunchParams } from "@telegram-apps/sdk-react";
 import BottomNav, { type Tab } from "@/components/BottomNav";
 import HomeScreen from "@/screens/HomeScreen";
 import QuestsScreen from "@/screens/QuestsScreen";
+import PlayScreen from "@/screens/PlayScreen";
 import EarnScreen from "@/screens/EarnScreen";
 import RedeemScreen from "@/screens/RedeemScreen";
 import ProfileScreen from "@/screens/ProfileScreen";
 
-import { getUser, trackReferral, getReferralStats } from "@/app/actions";
+import { getUser, trackReferral, getReferralStats, getStreakData } from "@/app/actions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -94,21 +95,18 @@ export default function App() {
 
     setUserId(tgId);
 
-    // Fetch/create user + streak in parallel
+    // Fetch/create user + streak + referral stats in parallel
     Promise.all([
       getUser(tgId, tgUsername, tgFirstName),
       getReferralStats(tgId),
-    ]).then(([user, refStats]) => {
+      getStreakData(tgId),
+    ]).then(([user, refStats, streak]) => {
       setUserData(user as UserData);
       setReferralCount(refStats.count);
-
-      // Determine if daily streak is claimable
-      // The server action handles the 20h window — we just optimistically allow if
-      // totalEarned > 0 (first boot). Real validation is server-side.
       setStreakData({
-        currentStreak: 0,   // updated via claimDailyStreak callback
-        longestStreak: 0,
-        canClaim: true,     // let server reject if already claimed
+        currentStreak: streak.currentStreak,
+        longestStreak: streak.longestStreak,
+        canClaim: streak.canClaim,
       });
 
       // If user arrived via referral link, track it
@@ -206,11 +204,9 @@ export default function App() {
             onBalanceUpdate={handleBalanceUpdate}
           />
         )}
-        {tab === "earn" && (
-          <EarnScreen
+        {tab === "play" && (
+          <PlayScreen
             userId={userId}
-            referralCode={userData.referralCode}
-            referralCount={referralCount}
             onBalanceUpdate={handleBalanceUpdate}
           />
         )}

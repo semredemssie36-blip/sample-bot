@@ -16,6 +16,8 @@ export interface QuestData {
   targetCount: number;
   progress: number;
   completed: boolean;
+  channelUsername?: string | null;
+  channelUrl?: string | null;
   // optional cashback variant (sponsored quests)
   cashbackPct?: number;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-export type Tab = "home" | "quests" | "earn" | "redeem" | "profile";
+export type Tab = "home" | "quests" | "play" | "redeem" | "profile";
 
 interface BottomNavProps {
   active: Tab;
@@ -36,29 +36,30 @@ export default function BottomNav({ active, onChange }: BottomNavProps) {
         </svg>
       </NavBtn>
 
-      {/* ── Centre lightning bolt (Earn) — elevated ── */}
+      {/* ── Centre game controller (Play) — elevated ── */}
       <div className="relative flex flex-col items-center" style={{ marginTop: "-20px" }}>
         <button
-          onClick={() => onChange("earn")}
-          aria-label="Earn"
-          aria-current={active === "earn" ? "page" : undefined}
+          onClick={() => onChange("play")}
+          aria-label="Play"
+          aria-current={active === "play" ? "page" : undefined}
           className="flex h-14 w-14 items-center justify-center rounded-full transition-all active:scale-90"
           style={{
-            background: active === "earn"
+            background: active === "play"
               ? "linear-gradient(135deg,#7c3aed,#a855f7)"
               : "linear-gradient(135deg,#5b21b6,#7c3aed)",
-            boxShadow: active === "earn"
+            boxShadow: active === "play"
               ? "0 0 24px rgba(168,85,247,0.6), 0 0 8px rgba(124,58,237,0.4)"
               : "0 0 16px rgba(124,58,237,0.35)",
             border: "2px solid rgba(167,139,250,0.3)",
           }}
         >
-          {/* Lightning bolt */}
+          {/* Game controller icon */}
           <svg viewBox="0 0 24 24" className="h-6 w-6" fill="white" aria-hidden="true">
-            <path d="M13 2L4.5 12.5h7L9 22l9-11h-7L13 2z"/>
+            <path d="M7 12h2m2-2v2m0 0v2m0-2h2M6 8l-.707.707A8 8 0 1018.707 8.707L18 8H6zm2-3h8a2 2 0 012 2v1H6V7a2 2 0 012-2z" stroke="white" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+            <circle cx="17" cy="14" r="1" fill="white"/>
+            <circle cx="19" cy="12" r="1" fill="white"/>
           </svg>
         </button>
-        {/* No label for centre */}
       </div>
 
       {/* Redeem */}

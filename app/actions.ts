@@ -357,6 +357,17 @@ export async function completeQuest(tgUserId: number, questId: string) {
   const quest = await prisma.quest.findUnique({ where: { id: questId } });
   if (!quest || !quest.active) return { success: false, error: "Quest not found" };
 
+  // Block channel/group/social quests from completing without verification
+  // These must go through verifyChannelMembership first
+  const VERIFIED_TYPES = ["JOIN_CHANNEL", "JOIN_GROUP", "SOCIAL_FOLLOW"];
+  if (VERIFIED_TYPES.includes(quest.type) && quest.channelUsername) {
+    // Re-verify on server side — cannot trust client
+    const check = await verifyChannelMembership(tgUserId, quest.channelUsername);
+    if (!check.isMember) {
+      return { success: false, error: "You must join the channel/group first" };
+    }
+  }
+
   let uq = await prisma.userQuest.findUnique({
     where: { userId_questId: { userId: id, questId } },
   });

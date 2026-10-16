@@ -14,8 +14,11 @@ enum QuestType {
   WATCH_AD
   INVITE_FRIENDS
   JOIN_CHANNEL
+  JOIN_GROUP
   PLAY_GAME
   SOCIAL_FOLLOW
+  CONNECT_WALLET
+  REACH_LEVEL
   SPONSORED
 }
 
@@ -33,48 +36,87 @@ enum WithdrawalStatus {
 }
 
 enum TransactionType {
+  TAP_REWARD
   QUEST_REWARD
   REFERRAL_BONUS
+  PASSIVE_INCOME
   STREAK_BONUS
   AD_REWARD
+  ACHIEVEMENT_BONUS
   WITHDRAWAL
   ADMIN_GRANT
 }
 
+enum AchievementType {
+  FIRST_TAP
+  FIRST_REFERRAL
+  STREAK_7
+  STREAK_30
+  LEVEL_5
+  LEVEL_10
+  LEVEL_20
+  INVITE_5
+  INVITE_10
+  INVITE_25
+  EARN_10K
+  EARN_100K
+  FIRST_WITHDRAWAL
+  WALLET_CONNECTED
+  ALL_QUESTS
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
-/// Core user record — one row per Telegram user.
 model User {
-  id          String   @id           // Telegram user ID as string
+  id          String   @id
   username    String?
   firstName   String?
   photoUrl    String?
 
   // Economy
-  novaBalance Int      @default(0)   // spendable NOVA coins
-  totalEarned Int      @default(0)   // lifetime earnings (never decreases)
-  level       Int      @default(1)
-  xp          Int      @default(0)   // XP toward next level
+  novaBalance  Int     @default(0)
+  totalEarned  Int     @default(0)
+  level        Int     @default(1)
+  xp           Int     @default(0)
+  totalTaps    Int     @default(0)
 
-  // Referral
-  referralCode   String  @unique     // short code for invite link
-  referredBy     String?             // referralCode of the inviter
+  // Referral tree
+  referralCode   String  @unique
+  referredBy     String?           // referralCode of direct inviter
 
-  // TON wallet (set when user connects)
+  // TON wallet
   tonWallet   String?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   // Relations
-  userQuests   UserQuest[]
-  referrals    Referral[]   @relation("Referrer")
-  transactions Transaction[]
-  withdrawals  Withdrawal[]
-  streak       DailyStreak?
+  energy          Energy?
+  userQuests      UserQuest[]
+  referrals       Referral[]          @relation("Referrer")
+  transactions    Transaction[]
+  withdrawals     Withdrawal[]
+  streak          DailyStreak?
+  achievements    UserAchievement[]
+  passiveIncome   PassiveIncome[]     @relation("Recipient")
+  passiveGenerated PassiveIncome[]    @relation("Generator")
+  gameSessions    GameSession[]
 }
 
-/// Quest definitions — seeded by admin, displayed to all users.
+// Energy system — tap the coin to earn NOVA
+model Energy {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  current     Int      @default(500)
+  maximum     Int      @default(500)
+  // Refill rate: 1 energy per 10 seconds
+  refillRate  Int      @default(1)      // energy per tick
+  refillEvery Int      @default(10)     // seconds per tick
+  lastRefillAt DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+}
+
 model Quest {
   id          String          @id @default(cuid())
   title       String
@@ -82,43 +124,38 @@ model Quest {
   iconEmoji   String          @default("⚡")
   type        QuestType
   difficulty  QuestDifficulty @default(EASY)
-  minutesEst  Int             @default(5)  // estimated time
+  minutesEst  Int             @default(5)
 
-  novaReward  Int             // NOVA coins awarded on completion
-  xpReward    Int             // XP awarded on completion
+  novaReward  Int
+  xpReward    Int
 
-  // For repeatable quests (e.g. DAILY_CHECKIN resets each day)
   repeatable  Boolean         @default(false)
   resetHours  Int             @default(24)
-
-  // Target for progress quests (e.g. invite 5 friends)
   targetCount Int             @default(1)
 
-  // Sponsor metadata (optional)
+  // Channel/group verification
+  channelUsername String?
+  channelUrl      String?
+
+  // Sponsor metadata
   sponsorName String?
   sponsorUrl  String?
 
-  // Channel/Group verification (for JOIN_CHANNEL / JOIN_GROUP quests)
-  channelUsername String?   // e.g. "novadroptg" — used with getChatMember API
-  channelUrl      String?   // full t.me link shown to the user
-
   active      Boolean         @default(true)
+  sortOrder   Int             @default(0)
   createdAt   DateTime        @default(now())
 
   userQuests  UserQuest[]
 }
 
-/// Tracks each user's progress on each quest.
 model UserQuest {
   id          String   @id @default(cuid())
   userId      String
   questId     String
-  progress    Int      @default(0)   // current progress toward targetCount
+  progress    Int      @default(0)
   completed   Boolean  @default(false)
   completedAt DateTime?
-  claimedAt   DateTime?             // when reward was actually paid out
-
-  // Reset tracking for repeatable quests
+  claimedAt   DateTime?
   lastReset   DateTime @default(now())
 
   user        User     @relation(fields: [userId], references: [id])
@@ -127,20 +164,32 @@ model UserQuest {
   @@unique([userId, questId])
 }
 
-/// Referral relationships.
 model Referral {
   id           String   @id @default(cuid())
-  referrerId   String                        // User who shared the link
-  refereeId    String   @unique              // New user who joined via link
-  bonusPaid    Boolean  @default(false)      // Has referrer received NOVA bonus?
-  bonusAmount  Int      @default(500)        // NOVA paid to referrer per referral
-
+  referrerId   String
+  refereeId    String   @unique
+  level        Int      @default(1)    // 1 = direct, 2 = friend-of-friend
+  bonusPaid    Boolean  @default(false)
+  bonusAmount  Int      @default(500)
   createdAt    DateTime @default(now())
 
   referrer     User     @relation("Referrer", fields: [referrerId], references: [id])
 }
 
-/// Daily login streak per user.
+// Passive income — every time a friend earns, you get a % automatically
+model PassiveIncome {
+  id           String   @id @default(cuid())
+  recipientId  String                        // who receives the %
+  generatorId  String                        // who earned (the friend)
+  level        Int                           // 1 = 10%, 2 = 3%
+  amount       Int                           // NOVA credited
+  sourceType   String                        // "TAP", "QUEST", "AD", etc.
+  createdAt    DateTime @default(now())
+
+  recipient    User     @relation("Recipient",  fields: [recipientId], references: [id])
+  generator    User     @relation("Generator",  fields: [generatorId], references: [id])
+}
+
 model DailyStreak {
   id            String   @id @default(cuid())
   userId        String   @unique
@@ -152,32 +201,65 @@ model DailyStreak {
   user          User     @relation(fields: [userId], references: [id])
 }
 
-/// Full ledger of every NOVA movement (earned or spent).
 model Transaction {
   id          String          @id @default(cuid())
   userId      String
   type        TransactionType
-  amount      Int             // positive = earn, negative = spend
+  amount      Int
   description String
-  meta        Json?           // extra context (questId, refereeId, etc.)
+  meta        Json?
   createdAt   DateTime        @default(now())
 
   user        User            @relation(fields: [userId], references: [id])
 }
 
-/// Withdrawal requests to TON wallet.
 model Withdrawal {
   id          String           @id @default(cuid())
   userId      String
-  novaAmount  Int              // NOVA being redeemed
-  tonAmount   Float            // equivalent TON (calculated at request time)
-  tonWallet   String           // destination wallet address
+  novaAmount  Int
+  tonAmount   Float
+  tonWallet   String
   status      WithdrawalStatus @default(PENDING)
-  txHash      String?          // TON blockchain tx hash when paid
-  note        String?          // admin note on rejection
-
+  txHash      String?
+  note        String?
   requestedAt DateTime         @default(now())
   processedAt DateTime?
 
   user        User             @relation(fields: [userId], references: [id])
+}
+
+model Achievement {
+  id          String          @id @default(cuid())
+  type        AchievementType @unique
+  title       String
+  description String
+  iconEmoji   String
+  novaReward  Int             @default(0)
+  xpReward    Int             @default(0)
+
+  userAchievements UserAchievement[]
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime @default(now())
+
+  user          User        @relation(fields: [userId], references: [id])
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
+}
+
+model GameSession {
+  id        String   @id @default(cuid())
+  userId    String
+  gameType  String   @default("coin_rush")
+  score     Int      @default(0)
+  novaEarned Int     @default(0)
+  duration  Int      @default(0)  // seconds
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
 }

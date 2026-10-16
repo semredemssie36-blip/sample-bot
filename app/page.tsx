@@ -1,233 +1,165 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { retrieveLaunchParams } from "@telegram-apps/sdk-react";
 
 import BottomNav, { type Tab } from "@/components/BottomNav";
-import HomeScreen from "@/screens/HomeScreen";
-import QuestsScreen from "@/screens/QuestsScreen";
-import PlayScreen from "@/screens/PlayScreen";
-import EarnScreen from "@/screens/EarnScreen";
-import RedeemScreen from "@/screens/RedeemScreen";
+import HomeScreen    from "@/screens/HomeScreen";
+import QuestsScreen  from "@/screens/QuestsScreen";
+import TapScreen     from "@/screens/TapScreen";
+import WalletScreen  from "@/screens/WalletScreen";
 import ProfileScreen from "@/screens/ProfileScreen";
 
-import { getUser, trackReferral, getReferralStats, getStreakData } from "@/app/actions";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { getUser, trackReferral, getReferralStats, getStreakData, getEnergy } from "@/app/actions";
 
 interface UserData {
-  id: string;
-  username?: string | null;
-  firstName?: string | null;
-  novaBalance: number;
-  totalEarned: number;
-  level: number;
-  xp: number;
-  xpForNext: number;
-  referralCode: string;
-  tonWallet?: string | null;
+  id: string; username?: string | null; firstName?: string | null;
+  novaBalance: number; totalEarned: number; level: number;
+  xp: number; xpForNext: number; totalTaps: number;
+  referralCode: string; referredBy?: string | null; tonWallet?: string | null;
 }
 
-interface StreakData {
-  currentStreak: number;
-  longestStreak: number;
-  canClaim: boolean;
-}
-
-// ─── App ──────────────────────────────────────────────────────────────────────
+interface StreakData { currentStreak: number; longestStreak: number; canClaim: boolean; }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("home");
-  const [userId, setUserId] = useState(0);
+  const [tab, setTab]           = useState<Tab>("home");
+  const [userId, setUserId]     = useState(0);
   const [userData, setUserData] = useState<UserData | null>(null);
-  const [streakData, setStreakData] = useState<StreakData>({
-    currentStreak: 0,
-    longestStreak: 0,
-    canClaim: false,
-  });
-  const [referralCount, setReferralCount] = useState(0);
-  const [booting, setBooting] = useState(true);
+  const [streakData, setStreak] = useState<StreakData>({ currentStreak: 0, longestStreak: 0, canClaim: false });
+  const [energy, setEnergy]     = useState(500);
+  const [energyMax]             = useState(500);
+  const [booting, setBooting]   = useState(true);
   const bootRef = useRef(false);
 
-  // ── Boot: parse Telegram identity, create/fetch user ────────────────────
+  // Auto-refill energy every 10s on the client
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setEnergy((prev) => Math.min(prev + 1, energyMax));
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [energyMax]);
+
+  // Boot sequence
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
 
-    // Tell Telegram the app is ready and expand to full height
     if (typeof window !== "undefined") {
       const tg = window.Telegram?.WebApp;
-      if (tg) { tg.ready(); tg.expand(); }
+      if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor?.("#0a0818"); tg.setBackgroundColor?.("#0a0818"); }
     }
 
-    let tgId = 0;
-    let tgUsername = "";
-    let tgFirstName = "";
-    let startParam = "";
+    let tgId = 0, tgUsername = "", tgFirstName = "", startParam = "";
 
-    // Try SDK v3 first
     try {
-      const lp = retrieveLaunchParams();
+      const lp   = retrieveLaunchParams();
       const user = lp.tgWebAppData?.user;
-      if (user) {
-        tgId        = user.id;
-        tgUsername  = (user.username  as string | undefined) ?? "";
-        tgFirstName = (user.firstName as string | undefined) ?? "";
-      }
+      if (user) { tgId = user.id; tgUsername = (user.username as string | undefined) ?? ""; tgFirstName = (user.firstName as string | undefined) ?? ""; }
       startParam = lp.tgWebAppStartParam ?? "";
-    } catch { /* outside Telegram */ }
+    } catch { /* not in Telegram */ }
 
-    // Fallback to legacy initDataUnsafe
     if (!tgId && typeof window !== "undefined") {
       const tg = window.Telegram?.WebApp;
       if (tg?.initDataUnsafe?.user) {
-        tgId        = tg.initDataUnsafe.user.id;
-        tgUsername  = tg.initDataUnsafe.user.username  ?? "";
+        tgId = tg.initDataUnsafe.user.id;
+        tgUsername = tg.initDataUnsafe.user.username ?? "";
         tgFirstName = tg.initDataUnsafe.user.first_name ?? "";
       }
-      if (!startParam && tg?.initDataUnsafe?.start_param) {
-        startParam = tg.initDataUnsafe.start_param;
-      }
+      if (!startParam) startParam = tg?.initDataUnsafe?.start_param ?? "";
     }
 
-    // Dev fallback (preview in browser)
-    if (!tgId) tgId = 999999999;
-
+    if (!tgId) tgId = 999999999; // dev fallback
     setUserId(tgId);
 
-    // Fetch/create user + streak + referral stats in parallel
     Promise.all([
       getUser(tgId, tgUsername, tgFirstName),
       getReferralStats(tgId),
       getStreakData(tgId),
-    ]).then(([user, refStats, streak]) => {
+      getEnergy(tgId),
+    ]).then(([user, , streak, energyData]) => {
       setUserData(user as UserData);
-      setReferralCount(refStats.count);
-      setStreakData({
-        currentStreak: streak.currentStreak,
-        longestStreak: streak.longestStreak,
-        canClaim: streak.canClaim,
-      });
+      setStreak({ currentStreak: streak.currentStreak, longestStreak: streak.longestStreak, canClaim: streak.canClaim });
+      setEnergy(energyData.current);
 
-      // If user arrived via referral link, track it
       if (startParam && startParam !== user.referralCode) {
-        trackReferral(tgId, startParam).catch(() => {/* silent */});
+        trackReferral(tgId, startParam).catch(() => {});
       }
-
       setBooting(false);
     });
   }, []);
 
-  // ── Global balance update helper ─────────────────────────────────────────
-  const handleBalanceUpdate = (delta: number) => {
-    setUserData((prev) =>
-      prev
-        ? {
-            ...prev,
-            novaBalance: Math.max(0, prev.novaBalance + delta),
-            totalEarned: delta > 0 ? prev.totalEarned + delta : prev.totalEarned,
-          }
-        : prev
-    );
-  };
-
-  // ── Streak claimed ────────────────────────────────────────────────────────
-  const handleStreakClaimed = (bonus: number, newStreak: number) => {
-    handleBalanceUpdate(bonus);
-    setStreakData((prev) => ({
+  const handleBalanceUpdate = useCallback((delta: number) => {
+    setUserData((prev) => prev ? {
       ...prev,
-      currentStreak: newStreak,
-      longestStreak: Math.max(newStreak, prev.longestStreak),
-      canClaim: false,
-    }));
-  };
+      novaBalance: Math.max(0, prev.novaBalance + delta),
+      totalEarned: delta > 0 ? prev.totalEarned + delta : prev.totalEarned,
+    } : prev);
+  }, []);
 
-  // ── Loading splash ────────────────────────────────────────────────────────
+  const handleStreakClaimed = useCallback((bonus: number, newStreak: number) => {
+    handleBalanceUpdate(bonus);
+    setStreak((prev) => ({ ...prev, currentStreak: newStreak, longestStreak: Math.max(newStreak, prev.longestStreak), canClaim: false }));
+  }, [handleBalanceUpdate]);
+
+  const handleWalletConnected = useCallback((address: string) => {
+    setUserData((prev) => prev ? { ...prev, tonWallet: address } : prev);
+  }, []);
+
+  // ── Loading splash ──────────────────────────────────────────────────────────
   if (booting || !userData) {
     return (
-      <div className="flex h-[100dvh] flex-col items-center justify-center bg-nova-bg gap-4">
-        {/* Animated logo */}
-        <div className="relative flex h-20 w-20 items-center justify-center">
-          <div className="absolute inset-0 rounded-3xl bg-nova-gradient opacity-20 animate-pulse-glow" />
-          <div className="relative rounded-3xl bg-nova-gradient p-0.5">
-            <div className="flex h-full w-full items-center justify-center rounded-[calc(1.5rem-2px)] bg-nova-card px-4 py-4">
-              <span className="text-3xl" aria-hidden="true">🪙</span>
-            </div>
+      <div className="flex h-[100dvh] flex-col items-center justify-center gap-5" style={{ background: "#0a0818" }}>
+        <div className="relative">
+          <div className="h-24 w-24 rounded-3xl flex items-center justify-center"
+            style={{ background: "linear-gradient(135deg,#f59e0b,#fbbf24)", boxShadow: "0 0 60px rgba(245,158,11,0.5)" }}>
+            <span style={{ fontSize: 48 }}>🪙</span>
           </div>
         </div>
         <div className="text-center">
-          <p className="text-xl font-black text-white tracking-tight">NovaDrop</p>
-          <p className="text-xs text-nova-muted mt-1">Loading your wallet…</p>
+          <p className="text-2xl font-black text-white tracking-tight">NovaDrop</p>
+          <p className="text-xs mt-1" style={{ color: "rgba(167,139,250,0.5)" }}>Loading your wallet…</p>
         </div>
-        <div className="flex gap-1.5 mt-2">
+        <div className="flex gap-2">
           {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-1.5 w-1.5 rounded-full bg-nova-violet animate-bounce-light"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
+            <div key={i} className="h-2 w-2 rounded-full bounce-dot" style={{ background: "#a855f7", animationDelay: `${i * 0.2}s` }} />
           ))}
         </div>
       </div>
     );
   }
 
-  // ── Main app ──────────────────────────────────────────────────────────────
+  // ── Main app ────────────────────────────────────────────────────────────────
   return (
-    <main className="relative flex h-[100dvh] flex-col overflow-hidden bg-nova-bg text-white">
-      {/* Ambient background glow */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        aria-hidden="true"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 40% at 50% 0%, rgba(124,58,237,0.12) 0%, transparent 70%)",
-        }}
-      />
+    <main className="relative flex h-[100dvh] flex-col overflow-hidden" style={{ background: "#0a0818" }}>
+      {/* Ambient glow */}
+      <div className="pointer-events-none absolute inset-0" aria-hidden="true"
+        style={{ background: "radial-gradient(ellipse 80% 35% at 50% 0%, rgba(124,58,237,0.1) 0%, transparent 70%)" }} />
 
-      {/* Scrollable screen area */}
+      {/* Scrollable content */}
       <div className="relative flex-1 overflow-y-auto overflow-x-hidden no-scrollbar">
         {tab === "home" && (
-          <HomeScreen
-            userId={userId}
-            userData={userData}
-            streakData={streakData}
-            onBalanceUpdate={handleBalanceUpdate}
-            onStreakClaimed={handleStreakClaimed}
-            onNavigateRedeem={() => setTab("redeem")}
-            onNavigateQuests={() => setTab("quests")}
-          />
+          <HomeScreen userId={userId} userData={userData} streakData={streakData}
+            energy={energy} energyMax={energyMax}
+            onBalanceUpdate={handleBalanceUpdate} onStreakClaimed={handleStreakClaimed}
+            onNavigateTap={() => setTab("tap")} onNavigateQuests={() => setTab("quests")} onNavigateWallet={() => setTab("wallet")} />
         )}
         {tab === "quests" && (
-          <QuestsScreen
-            userId={userId}
-            onBalanceUpdate={handleBalanceUpdate}
-          />
+          <QuestsScreen userId={userId} onBalanceUpdate={handleBalanceUpdate} />
         )}
-        {tab === "play" && (
-          <PlayScreen
-            userId={userId}
-            onBalanceUpdate={handleBalanceUpdate}
-          />
+        {tab === "tap" && (
+          <TapScreen userId={userId} energy={energy} energyMax={energyMax}
+            onEnergyUpdate={setEnergy} onBalanceUpdate={handleBalanceUpdate} />
         )}
-        {tab === "redeem" && (
-          <RedeemScreen
-            userId={userId}
-            novaBalance={userData.novaBalance}
-            onBalanceUpdate={handleBalanceUpdate}
-          />
+        {tab === "wallet" && (
+          <WalletScreen userId={userId} novaBalance={userData.novaBalance}
+            tonWallet={userData.tonWallet} onBalanceUpdate={handleBalanceUpdate} onWalletConnected={handleWalletConnected} />
         )}
         {tab === "profile" && (
-          <ProfileScreen
-            userId={userId}
-            userData={userData}
-            streakData={streakData}
-          />
+          <ProfileScreen userId={userId} userData={userData} streakData={streakData} />
         )}
       </div>
 
-      {/* Bottom navigation */}
-      <BottomNav active={tab} onChange={setTab} />
+      <BottomNav active={tab} onChange={setTab} energy={energy} energyMax={energyMax} />
     </main>
   );
 }

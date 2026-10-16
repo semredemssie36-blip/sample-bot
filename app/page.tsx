@@ -144,7 +144,7 @@ export default function App() {
             onNavigateTap={() => setTab("tap")} onNavigateQuests={() => setTab("quests")} onNavigateWallet={() => setTab("wallet")} />
         )}
         {tab === "quests" && (
-          <QuestsScreen userId={userId} onBalanceUpdate={handleBalanceUpdate} />
+          <QuestsScreen userId={userId} referralCode={userData.referralCode} onBalanceUpdate={handleBalanceUpdate} />
         )}
         {tab === "tap" && (
           <TapScreen userId={userId} energy={energy} energyMax={energyMax}

@@ -273,6 +273,22 @@ export async function tapCoin(tgUserId: number, taps: number = 1) {
   const id      = String(tgUserId);
   const safeTaps = Math.min(Math.max(1, taps), 10); // max 10 taps per call
 
+  // Server-side rate limit: check last tap transaction timestamp
+  // Reject if last tap was less than 400ms ago (10 taps/500ms = 1 per 50ms, be generous at 400ms for batch)
+  const lastTap = await prisma.transaction.findFirst({
+    where: { userId: id, type: TransactionType.TAP_REWARD },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+
+  if (lastTap) {
+    const msSinceLast = Date.now() - new Date(lastTap.createdAt).getTime();
+    // Each batch call should be at least 400ms apart (10 taps takes ~500ms for a human)
+    if (msSinceLast < 400) {
+      return { success: false, error: "Too fast", energy: null };
+    }
+  }
+
   // Refresh energy first
   const energyData = await getEnergy(tgUserId);
   if (energyData.current < safeTaps) {
@@ -306,10 +322,8 @@ export async function tapCoin(tgUserId: number, taps: number = 1) {
     }),
   ]);
 
-  // Passive income for referrers
+  // Passive income for referrers (fire-and-forget)
   distributePassiveIncome(id, novaEarned, "TAP").catch(() => {});
-
-  // Check achievements async
   checkAchievements(id).catch(() => {});
 
   const newEnergy = Math.max(0, energyData.current - safeTaps);
@@ -624,4 +638,85 @@ export async function getLiveStats() {
     prisma.user.aggregate({ _sum: { totalEarned: true } }),
   ]);
   return { totalUsers, totalNovaEarned: totalNova._sum.totalEarned ?? 0 };
+}
+
+// ─── getReferralQuestProgress ─────────────────────────────────────────────────
+// Returns the real referral count from DB and auto-completes INVITE_FRIENDS
+// quests whose targetCount has been reached. Called on QuestsScreen load.
+
+export async function syncReferralQuestProgress(tgUserId: number) {
+  const id = String(tgUserId);
+
+  // Count real referrals made by this user
+  const referralCount = await prisma.referral.count({
+    where: { referrerId: id },
+  });
+
+  // Find all INVITE_FRIENDS quests
+  const inviteQuests = await prisma.quest.findMany({
+    where: { type: "INVITE_FRIENDS", active: true },
+  });
+
+  const results: Array<{ questId: string; progress: number; completed: boolean; newlyCompleted: boolean }> = [];
+
+  for (const quest of inviteQuests) {
+    const progress = Math.min(referralCount, quest.targetCount);
+    const shouldComplete = referralCount >= quest.targetCount;
+
+    let uq = await prisma.userQuest.findUnique({
+      where: { userId_questId: { userId: id, questId: quest.id } },
+    });
+
+    if (!uq) {
+      uq = await prisma.userQuest.create({
+        data: { userId: id, questId: quest.id, progress },
+      });
+    }
+
+    // Already completed — skip
+    if (uq.completed) {
+      results.push({ questId: quest.id, progress, completed: true, newlyCompleted: false });
+      continue;
+    }
+
+    // Update progress always
+    await prisma.userQuest.update({
+      where: { id: uq.id },
+      data: { progress },
+    });
+
+    // Auto-complete if threshold reached
+    if (shouldComplete) {
+      await prisma.$transaction([
+        prisma.userQuest.update({
+          where: { id: uq.id },
+          data: { completed: true, completedAt: new Date() },
+        }),
+        prisma.user.update({
+          where: { id },
+          data: {
+            novaBalance: { increment: quest.novaReward },
+            totalEarned: { increment: quest.novaReward },
+            xp:          { increment: quest.xpReward },
+          },
+        }),
+        prisma.transaction.create({
+          data: {
+            userId:      id,
+            type:        TransactionType.QUEST_REWARD,
+            amount:      quest.novaReward,
+            description: `Quest completed: ${quest.title}`,
+            meta:        { questId: quest.id, referralCount },
+          },
+        }),
+      ]);
+      distributePassiveIncome(id, quest.novaReward, "QUEST").catch(() => {});
+      checkAchievements(id).catch(() => {});
+      results.push({ questId: quest.id, progress, completed: true, newlyCompleted: true });
+    } else {
+      results.push({ questId: quest.id, progress, completed: false, newlyCompleted: false });
+    }
+  }
+
+  return { referralCount, quests: results };
 }

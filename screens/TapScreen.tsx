@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { tapCoin } from "@/app/actions";
+import { tapCoin, getEnergy } from "@/app/actions";
 
 interface TapScreenProps {
   userId: number;
@@ -32,7 +32,6 @@ export default function TapScreen({ userId, energy, energyMax, onEnergyUpdate, o
   const [localEnergy, setLocalEnergy] = useState(energy);
   const [totalTapped, setTotalTapped]  = useState(0);
   const [combo, setCombo]              = useState(0);
-  const [isTapping, setIsTapping]      = useState(false);
   const [floatTexts, setFloatTexts]    = useState<FloatText[]>([]);
   const [particles, setParticles]      = useState<Particle[]>([]);
   const [isAnimating, setIsAnimating]  = useState(false);
@@ -43,6 +42,15 @@ export default function TapScreen({ userId, energy, energyMax, onEnergyUpdate, o
   const comboTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const floatIdRef  = useRef(0);
   const partIdRef   = useRef(0);
+
+  // Sync real energy from server on mount (tab switch)
+  useEffect(() => {
+    getEnergy(userId).then((e) => {
+      setLocalEnergy(e.current);
+      onEnergyUpdate(e.current);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   useEffect(() => { setLocalEnergy(energy); }, [energy]);
 
@@ -95,6 +103,9 @@ export default function TapScreen({ userId, energy, energyMax, onEnergyUpdate, o
     setTotalTapped((prev) => prev + 1);
     setIsAnimating(true);
     setTimeout(() => setIsAnimating(false), 180);
+
+    // Haptic feedback
+    if (navigator.vibrate) navigator.vibrate(10);
 
     // Combo
     setCombo((prev) => prev + 1);

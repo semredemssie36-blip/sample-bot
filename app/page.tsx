@@ -4,11 +4,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { retrieveLaunchParams } from "@telegram-apps/sdk-react";
 
 import BottomNav, { type Tab } from "@/components/BottomNav";
-import HomeScreen    from "@/screens/HomeScreen";
-import QuestsScreen  from "@/screens/QuestsScreen";
-import TapScreen     from "@/screens/TapScreen";
-import WalletScreen  from "@/screens/WalletScreen";
-import ProfileScreen from "@/screens/ProfileScreen";
+import HomeScreen         from "@/screens/HomeScreen";
+import QuestsScreen       from "@/screens/QuestsScreen";
+import PlayScreen         from "@/screens/PlayScreen";
+import WalletScreen       from "@/screens/WalletScreen";
+import ProfileScreen      from "@/screens/ProfileScreen";
 
 import { getUser, trackReferral, getReferralStats, getStreakData, getEnergy } from "@/app/actions";
 
@@ -147,8 +147,13 @@ export default function App() {
           <QuestsScreen userId={userId} referralCode={userData.referralCode} onBalanceUpdate={handleBalanceUpdate} />
         )}
         {tab === "tap" && (
-          <TapScreen userId={userId} energy={energy} energyMax={energyMax}
-            onEnergyUpdate={setEnergy} onBalanceUpdate={handleBalanceUpdate} />
+          <PlayScreen
+            userId={userId}
+            energy={energy}
+            energyMax={energyMax}
+            onEnergyUpdate={setEnergy}
+            onBalanceUpdate={handleBalanceUpdate}
+          />
         )}
         {tab === "wallet" && (
           <WalletScreen userId={userId} novaBalance={userData.novaBalance}

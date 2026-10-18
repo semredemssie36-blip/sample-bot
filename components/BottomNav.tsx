@@ -61,7 +61,7 @@ export default function BottomNav({ active, onChange, energy, energyMax }: Botto
           </svg>
         </button>
         <span className="mt-1 text-[0.55rem] font-bold" style={{ color: active === "tap" ? "#f59e0b" : "rgba(245,158,11,0.5)" }}>
-          TAP
+          PLAY
         </span>
       </div>
 

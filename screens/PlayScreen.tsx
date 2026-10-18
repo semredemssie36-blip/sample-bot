@@ -1,259 +1,208 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import SnakeCanvas from "@/components/SnakeCanvas";
-import SwipeControls from "@/components/SwipeControls";
-import { useSnakeGame } from "@/hooks/useSnakeGame";
-import { completeQuest, getQuests } from "@/app/actions";
+import { useState } from "react";
+import TapScreen          from "@/screens/TapScreen";
+import NovaBlasterScreen  from "@/screens/NovaBlasterScreen";
 
 interface PlayScreenProps {
-  userId: number;
+  userId:          number;
+  energy:          number;
+  energyMax:       number;
+  onEnergyUpdate:  (e: number) => void;
   onBalanceUpdate: (delta: number) => void;
 }
 
-// NOVA earned per food eaten during a game session
-const NOVA_PER_FOOD = 5;
+type Game = "hub" | "tap" | "blaster";
 
-function useGameSize() {
-  const [size, setSize] = useState(320);
-  useEffect(() => {
-    const calc = () => {
-      const maxH = window.innerHeight - 160 - 120;
-      const maxW = window.innerWidth - 32;
-      setSize(Math.min(maxW, maxH, 380));
-    };
-    calc();
-    window.addEventListener("resize", calc);
-    return () => window.removeEventListener("resize", calc);
-  }, []);
-  return size;
-}
+export default function PlayScreen({
+  userId, energy, energyMax, onEnergyUpdate, onBalanceUpdate,
+}: PlayScreenProps) {
+  const [game, setGame] = useState<Game>("hub");
 
-export default function PlayScreen({ userId, onBalanceUpdate }: PlayScreenProps) {
-  const [screen, setScreen] = useState<"start" | "game" | "gameover">("start");
-  const [lastScore, setLastScore] = useState(0);
-  const [novaEarned, setNovaEarned] = useState(0);
-  const [highScore, setHighScore] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const [gameQuestId, setGameQuestId] = useState<string | null>(null);
-  const gameSize = useGameSize();
-  const earnedRef = useRef(0);
+  // ── Sub-game screens ──────────────────────────────────────────────────────
+  if (game === "tap") {
+    return (
+      <div className="flex flex-col h-full">
+        <button
+          onClick={() => setGame("hub")}
+          className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold shrink-0"
+          style={{ background: "rgba(10,8,24,0.9)", borderBottom: "1px solid rgba(37,28,74,0.6)", color: "rgba(167,139,250,0.7)" }}
+        >
+          ← Back to Games
+        </button>
+        <TapScreen
+          userId={userId}
+          energy={energy}
+          energyMax={energyMax}
+          onEnergyUpdate={onEnergyUpdate}
+          onBalanceUpdate={onBalanceUpdate}
+        />
+      </div>
+    );
+  }
 
-  // Load PLAY_GAME quest ID on mount
-  useEffect(() => {
-    getQuests(userId).then((quests) => {
-      const playQuest = quests.find((q) => q.type === "PLAY_GAME" && !q.completed);
-      if (playQuest) setGameQuestId(playQuest.id);
-    });
-  }, [userId]);
+  if (game === "blaster") {
+    return (
+      <div className="flex flex-col h-full">
+        <button
+          onClick={() => setGame("hub")}
+          className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold shrink-0"
+          style={{ background: "rgba(10,8,24,0.9)", borderBottom: "1px solid rgba(37,28,74,0.6)", color: "rgba(167,139,250,0.7)" }}
+        >
+          ← Back to Games
+        </button>
+        <NovaBlasterScreen
+          userId={userId}
+          onBalanceUpdate={onBalanceUpdate}
+        />
+      </div>
+    );
+  }
 
-  const onDeath = useCallback(
-    async (score: number) => {
-      setLastScore(score);
-      const earned = earnedRef.current;
-      setNovaEarned(earned);
-      earnedRef.current = 0;
-
-      if (earned > 0) {
-        onBalanceUpdate(earned);
-      }
-
-      const newBest = score > highScore;
-      if (newBest) setHighScore(score);
-      setIsNewBest(newBest && score > 0);
-
-      // Auto-complete PLAY_GAME quest on any game over
-      if (gameQuestId && userId) {
-        completeQuest(userId, gameQuestId).catch(() => {});
-      }
-
-      setScreen("gameover");
-    },
-    [highScore, onBalanceUpdate, userId, gameQuestId]
-  );
-
-  const [gameState, gameControls] = useSnakeGame(onDeath);
-
-  // Track NOVA earnings as snake grows
-  const prevLengthRef = useRef(3);
-  useEffect(() => {
-    if (screen !== "game") return;
-    const currentLength = gameState.snake.length;
-    if (currentLength > prevLengthRef.current) {
-      const foodEaten = currentLength - prevLengthRef.current;
-      earnedRef.current += foodEaten * NOVA_PER_FOOD;
-      prevLengthRef.current = currentLength;
-    }
-  }, [gameState.snake.length, screen]);
-
-  const startGame = () => {
-    prevLengthRef.current = 3;
-    earnedRef.current = 0;
-    setNovaEarned(0);
-    setIsNewBest(false);
-    setScreen("game");
-    gameControls.startGame();
-  };
-
-  const LEVEL_COLORS = [
-    "#22d3ee", "#4ade80", "#a3e635",
-    "#facc15", "#fb923c", "#f87171",
-    "#e879f9", "#a855f7",
-  ];
-  const levelColor = LEVEL_COLORS[(gameState.level - 1) % LEVEL_COLORS.length];
-
+  // ── Games Hub ─────────────────────────────────────────────────────────────
   return (
     <div
-      className="flex flex-col min-h-full pb-24"
-      style={{ background: "#0d0b1a" }}
+      className="flex flex-col pb-28 pt-4 px-4 gap-4"
+      style={{ background: "#0a0818", minHeight: "100%" }}
     >
-      {/* Header */}
-      <div className="px-4 pt-4 pb-2">
-        <h1 className="text-lg font-black text-white">Play & Earn</h1>
+      <div>
+        <h1 className="text-lg font-black text-white">Games</h1>
         <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.5)" }}>
-          Eat food → earn {NOVA_PER_FOOD} NOVA per bite
+          Play games, earn NOVA — every session counts
         </p>
       </div>
 
-      {/* Stats bar */}
-      <div className="grid grid-cols-3 gap-2 px-4 mb-3">
-        {[
-          { label: "Score", value: screen === "game" ? gameState.score : lastScore, color: "#a855f7" },
-          { label: "Level", value: screen === "game" ? gameState.level : 1, color: levelColor },
-          { label: "Best", value: highScore, color: "#f59e0b" },
-        ].map(({ label, value, color }) => (
-          <div
-            key={label}
-            className="rounded-2xl px-3 py-2"
-            style={{ background: "rgba(42,26,94,0.6)", border: "1px solid rgba(139,92,246,0.15)" }}
-          >
-            <p className="text-[0.6rem] uppercase tracking-wide" style={{ color: "rgba(167,139,250,0.5)" }}>
-              {label}
-            </p>
-            <p className="text-xl font-black tabular-nums" style={{ color }}>
-              {value}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      {/* Game canvas */}
-      <div className="flex flex-col items-center px-4">
+      {/* ── Tap Coin card ───────────────────────────────────────────────── */}
+      <button
+        onClick={() => setGame("tap")}
+        className="flex items-center gap-4 rounded-3xl px-5 py-5 text-left w-full transition-all active:scale-98"
+        style={{
+          background: "linear-gradient(135deg, rgba(245,158,11,0.12) 0%, rgba(251,191,36,0.06) 100%)",
+          border:     "1px solid rgba(245,158,11,0.3)",
+        }}
+      >
         <div
-          className="relative overflow-hidden rounded-2xl"
-          style={{ width: gameSize, height: gameSize }}
+          className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-3xl"
+          style={{ background: "linear-gradient(135deg,#d97706,#f59e0b)", boxShadow: "0 0 24px rgba(245,158,11,0.4)" }}
         >
-          <SnakeCanvas
-            snake={gameState.snake}
-            food={gameState.food}
-            phase={gameState.phase}
-            sizePx={gameSize}
-          />
-
-          {screen === "game" && (
-            <SwipeControls onDirection={gameControls.changeDirection} />
-          )}
-
-          {/* NOVA earned live indicator */}
-          {screen === "game" && earnedRef.current > 0 && (
-            <div
-              className="absolute top-3 right-3 rounded-xl px-2.5 py-1 text-xs font-black"
-              style={{ background: "rgba(245,158,11,0.85)", color: "white" }}
+          🪙
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-base font-black text-white">Tap Coin</p>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.5)" }}>
+            Tap the coin to earn NOVA. Energy refills over time.
+          </p>
+          <div className="flex items-center gap-3 mt-2">
+            <span
+              className="text-[0.6rem] font-bold rounded-full px-2 py-0.5"
+              style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.3)", color: "#f59e0b" }}
             >
-              +{earnedRef.current} NOVA
-            </div>
-          )}
+              1 NOVA / tap
+            </span>
+            <span className="text-[0.6rem]" style={{ color: "rgba(167,139,250,0.4)" }}>
+              ⚡ {energy}/{energyMax} energy
+            </span>
+          </div>
+        </div>
+        <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" stroke="rgba(167,139,250,0.4)" strokeWidth="2" fill="none" strokeLinecap="round">
+          <path d="M9 18l6-6-6-6"/>
+        </svg>
+      </button>
 
-          {/* Start overlay */}
-          {screen === "start" && (
-            <div
-              className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl"
-              style={{ background: "rgba(13,11,26,0.88)", backdropFilter: "blur(6px)" }}
+      {/* ── Nova Blaster card ───────────────────────────────────────────── */}
+      <button
+        onClick={() => setGame("blaster")}
+        className="flex items-center gap-4 rounded-3xl px-5 py-5 text-left w-full transition-all active:scale-98"
+        style={{
+          background: "linear-gradient(135deg, rgba(168,85,247,0.12) 0%, rgba(236,72,153,0.06) 100%)",
+          border:     "1px solid rgba(168,85,247,0.3)",
+        }}
+      >
+        <div
+          className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-3xl"
+          style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7,#e879f9)", boxShadow: "0 0 24px rgba(168,85,247,0.4)" }}
+        >
+          🚀
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-base font-black text-white">Nova Blaster</p>
+            <span
+              className="text-[0.55rem] font-black rounded-full px-1.5 py-0.5 uppercase tracking-wide"
+              style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7)", color: "white" }}
             >
-              <div className="text-5xl mb-3">🐍</div>
-              <h2 className="text-2xl font-black text-white uppercase tracking-widest mb-1">Snake</h2>
-              <p className="text-xs mb-2" style={{ color: "rgba(167,139,250,0.6)" }}>
-                Earn {NOVA_PER_FOOD} NOVA per food eaten
-              </p>
-              <button
-                onClick={startGame}
-                className="mt-3 rounded-2xl px-8 py-3 text-sm font-bold text-white active:scale-95 transition-transform"
-                style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7)", boxShadow: "0 0 20px rgba(124,58,237,0.4)" }}
-              >
-                Play Now
-              </button>
-            </div>
-          )}
-
-          {/* Game over overlay */}
-          {screen === "gameover" && (
-            <div
-              className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl px-6"
-              style={{ background: "rgba(13,11,26,0.92)", backdropFilter: "blur(6px)" }}
+              NEW
+            </span>
+          </div>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.5)" }}>
+            Survive the swarm. The deeper you go, the more you earn.
+          </p>
+          <div className="flex items-center gap-3 mt-2 flex-wrap">
+            <span
+              className="text-[0.6rem] font-bold rounded-full px-2 py-0.5"
+              style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.3)", color: "#a855f7" }}
             >
-              <div className="text-4xl mb-2">💀</div>
-              <h2 className="text-xl font-black text-white uppercase tracking-widest mb-3">Game Over</h2>
+              2 NOVA / kill
+            </span>
+            <span
+              className="text-[0.6rem] font-bold rounded-full px-2 py-0.5"
+              style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "#ef4444" }}
+            >
+              Boss: +100 NOVA
+            </span>
+            <span className="text-[0.6rem]" style={{ color: "rgba(167,139,250,0.4)" }}>
+              5 enemy types
+            </span>
+          </div>
+        </div>
+        <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" stroke="rgba(167,139,250,0.4)" strokeWidth="2" fill="none" strokeLinecap="round">
+          <path d="M9 18l6-6-6-6"/>
+        </svg>
+      </button>
 
-              {/* Score */}
-              <div className="mb-2 text-center">
-                <p className="text-4xl font-black tabular-nums" style={{ color: "#a855f7" }}>
-                  {lastScore}
-                </p>
-                <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.5)" }}>
-                  {isNewBest ? "🎉 New best!" : `Best: ${highScore}`}
-                </p>
-              </div>
-
-              {/* NOVA earned this game */}
-              {novaEarned > 0 && (
-                <div
-                  className="mb-3 rounded-xl px-4 py-2 text-sm font-black"
-                  style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.3)", color: "#f59e0b" }}
-                >
-                  +{novaEarned} NOVA earned this game 🪙
-                </div>
-              )}
-
-              <div className="flex gap-3 w-full mt-1">
-                <button
-                  onClick={startGame}
-                  className="flex-1 rounded-2xl py-3 text-sm font-bold text-white active:scale-95 transition-transform"
-                  style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7)" }}
-                >
-                  Retry
-                </button>
-                <button
-                  onClick={() => setScreen("start")}
-                  className="flex-1 rounded-2xl py-3 text-sm font-bold active:scale-95 transition-transform"
-                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(139,92,246,0.2)", color: "rgba(167,139,250,0.8)" }}
-                >
-                  Menu
-                </button>
-              </div>
-            </div>
-          )}
+      {/* Coming soon card */}
+      <div
+        className="flex items-center gap-4 rounded-3xl px-5 py-4 opacity-50"
+        style={{
+          background: "rgba(255,255,255,0.03)",
+          border:     "1px dashed rgba(255,255,255,0.1)",
+        }}
+      >
+        <div
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-2xl"
+          style={{ background: "rgba(255,255,255,0.05)" }}
+        >
+          🎯
+        </div>
+        <div>
+          <p className="text-sm font-bold text-white">More Games</p>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.4)" }}>
+            Coming soon — stay tuned
+          </p>
         </div>
       </div>
 
-      {/* How to play */}
-      {screen === "start" && (
-        <div className="mx-4 mt-4 rounded-2xl px-4 py-4" style={{ background: "rgba(42,26,94,0.4)", border: "1px solid rgba(139,92,246,0.15)" }}>
-          <p className="text-xs font-bold text-white mb-2">How to play</p>
-          <div className="space-y-1.5">
-            {[
-              { icon: "👆", text: "Swipe or use D-pad to move" },
-              { icon: "🍎", text: `Eat food → +${NOVA_PER_FOOD} NOVA per bite` },
-              { icon: "⚡", text: "Level up every 5 foods — gets faster" },
-              { icon: "💀", text: "Don't hit walls or your own tail" },
-            ].map(({ icon, text }) => (
-              <div key={text} className="flex items-center gap-2">
-                <span className="text-sm">{icon}</span>
-                <span className="text-xs" style={{ color: "rgba(167,139,250,0.6)" }}>{text}</span>
-              </div>
-            ))}
-          </div>
+      {/* Stats row */}
+      <div
+        className="rounded-2xl px-4 py-3"
+        style={{ background: "rgba(19,15,42,0.8)", border: "1px solid rgba(37,28,74,0.8)" }}
+      >
+        <p className="text-[0.6rem] uppercase tracking-wide mb-2" style={{ color: "rgba(167,139,250,0.4)" }}>
+          Your gaming stats
+        </p>
+        <div className="flex items-center justify-around">
+          {[
+            { label: "Games Played",   value: "—" },
+            { label: "Best Wave",      value: "—" },
+            { label: "Total Earned",   value: "—" },
+          ].map(({ label, value }) => (
+            <div key={label} className="text-center">
+              <p className="text-base font-black text-white">{value}</p>
+              <p className="text-[0.55rem]" style={{ color: "rgba(167,139,250,0.4)" }}>{label}</p>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -1,625 +1,625 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nova Blaster — Complete Game Engine
-// Full vertical space shooter: 5 enemy types, boss waves, power-ups,
-// particle explosions, drag controls, wave progression, NOVA earning
+// Nova Blaster — Production Arcade Shooter Engine v2
+// Real formation attacks, bullet levels, screen shake, proper game feel
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type GamePhase = "idle" | "playing" | "paused" | "gameover";
-
-// ─── Types ───────────────────────────────────────────────────────────────────
+export type EnemyType = "fighter" | "heavy" | "scout" | "gunship" | "boss";
+export type PowerUpType = "bulletUp" | "rapidFire" | "shield" | "bomb" | "nova" | "missile";
+export type BulletOwner = "player" | "enemy";
+export type FormationType = "vshape" | "line" | "pincer" | "swarm" | "wall";
 
 export interface Vec2 { x: number; y: number; }
 
-export type EnemyType = "straight" | "zigzag" | "diver" | "shooter" | "circler" | "boss";
-export type PowerUpType = "doubleShot" | "rapidFire" | "shield" | "bomb" | "nova";
-export type BulletOwner = "player" | "enemy";
-
-export interface Star { x: number; y: number; speed: number; size: number; alpha: number; }
+export interface Star {
+  x: number; y: number;
+  speed: number; size: number; alpha: number; twinkle: number;
+}
 
 export interface Bullet {
-  id:     number;
-  x:      number;
-  y:      number;
-  vx:     number;
-  vy:     number;
-  owner:  BulletOwner;
-  color:  string;
-  size:   number;
-  damage: number;
+  id: number; x: number; y: number;
+  vx: number; vy: number;
+  owner: BulletOwner;
+  level: number;       // player bullet level 1-4
+  color: string; size: number; damage: number;
+  isMissile: boolean;
+  targetId?: number;   // missile homing target
+  trail: Array<{x:number;y:number}>;
 }
 
 export interface Enemy {
-  id:      number;
-  type:    EnemyType;
-  x:       number;
-  y:       number;
-  hp:      number;
-  maxHp:   number;
-  speed:   number;
-  phase:   number;   // internal movement phase
-  timer:   number;   // shoot timer
+  id: number; type: EnemyType;
+  x: number; y: number;
+  hp: number; maxHp: number;
+  speed: number;
+  // Formation movement
+  formX: number; formY: number;  // target formation position
+  phase: number; timer: number;
   shootCooldown: number;
-  color:   string;
-  size:    number;
-  points:  number;
-  nova:    number;
+  color: string; size: number;
+  points: number; nova: number;
   flashTimer: number;
+  // Movement state
+  entered: boolean;   // has reached formation position
+  diveTimer: number;  // countdown to dive attack
+  isDiving: boolean;
+  diveTargetX: number; diveTargetY: number;
 }
 
 export interface PowerUp {
-  id:   number;
-  type: PowerUpType;
-  x:    number;
-  y:    number;
-  vy:   number;
+  id: number; type: PowerUpType;
+  x: number; y: number; vy: number;
+  pulse: number;
 }
 
 export interface Particle {
-  id:    number;
-  x:     number;
-  y:     number;
-  vx:    number;
-  vy:    number;
-  color: string;
-  size:  number;
-  life:  number;  // 0-1, decreases each frame
-  decay: number;
+  id: number; x: number; y: number;
+  vx: number; vy: number;
+  color: string; size: number;
+  life: number; decay: number;
+  shape: "circle" | "spark" | "ring";
 }
 
 export interface FloatText {
-  id:   number;
-  x:    number;
-  y:    number;
-  text: string;
-  color: string;
-  life: number;
+  id: number; x: number; y: number;
+  text: string; color: string; life: number; scale: number;
 }
 
 export interface Player {
-  x:       number;
-  y:       number;
-  width:   number;
-  height:  number;
-  shield:  number;
-  maxShield: number;
-  lives:   number;
-  invincible: number;  // frames of invincibility after hit
-  // Power-ups
-  doubleShot: number;
-  rapidFire:  number;
-  hasBomb:    boolean;
+  x: number; y: number;
+  width: number; height: number;
+  shield: number; maxShield: number;
+  lives: number;
+  invincible: number;
+  bulletLevel: number;   // 1-4
+  rapidFire: number;
+  hasBomb: boolean;
+  hasMissile: boolean;
   shootTimer: number;
-  baseShootRate: number;
+  missileTimer: number;
+  engineFlame: number;   // animated flame size
 }
 
 export interface GameState {
-  phase:       GamePhase;
-  score:       number;
-  novaEarned:  number;
-  wave:        number;
-  waveTimer:   number;   // countdown between waves
-  player:      Player;
-  enemies:     Enemy[];
-  bullets:     Bullet[];
-  powerUps:    PowerUp[];
-  particles:   Particle[];
-  floatTexts:  FloatText[];
-  stars:       Star[];
-  bossActive:  boolean;
+  phase: GamePhase;
+  score: number; novaEarned: number;
+  wave: number; waveTimer: number;
+  player: Player;
+  enemies: Enemy[];
+  bullets: Bullet[];
+  powerUps: PowerUp[];
+  particles: Particle[];
+  floatTexts: FloatText[];
+  stars: Star[];
+  bossActive: boolean;
   waveCleared: boolean;
-  totalTime:   number;   // seconds survived
+  totalTime: number;
+  // Screen shake
+  shakeX: number; shakeY: number; shakeDuration: number;
+  // Screen flash
+  flashAlpha: number; flashColor: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+const PLAYER_SPEED     = 7;
+const SHOOT_RATES      = [0, 16, 14, 12, 9];  // by bullet level
+const RAPID_MULTIPLIER = 0.45;
+const NOVA_PER_ENEMY   = 2;
+const NOVA_BOSS        = 150;
+const NOVA_COIN        = 20;
+const NOVA_WAVE_BASE   = 10;
+const SURVIVAL_FRAMES  = 300;
+const POWERUP_CHANCE   = 0.28;
 
-const PLAYER_SPEED       = 6;
-const BASE_SHOOT_RATE    = 18;  // frames between shots
-const RAPID_SHOOT_RATE   = 7;
-const SHIELD_MAX         = 3;
-const LIVES_MAX          = 3;
-const POWERUP_CHANCE     = 0.25; // 25% drop chance
-const NOVA_PER_ENEMY     = 2;
-const NOVA_PER_WAVE      = 10;
-const NOVA_BOSS_KILL     = 100;
-const NOVA_COIN_VALUE    = 20;
-const NOVA_SURVIVAL_RATE = 300; // frames per +1 NOVA
+let _uid = 100;
+const uid = () => ++_uid;
 
-let _id = 1;
-const nextId = () => ++_id;
-
-// ─── Factories ────────────────────────────────────────────────────────────────
-
-function makeStars(count: number, w: number, h: number): Star[] {
+// ─── Stars ────────────────────────────────────────────────────────────────────
+export function makeStars(count: number, w: number, h: number): Star[] {
   return Array.from({ length: count }, () => ({
-    x:     Math.random() * w,
-    y:     Math.random() * h,
-    speed: Math.random() * 1.5 + 0.3,
-    size:  Math.random() * 2 + 0.5,
-    alpha: Math.random() * 0.7 + 0.3,
+    x: Math.random() * w, y: Math.random() * h,
+    speed: Math.random() * 2 + 0.4,
+    size: Math.random() * 1.8 + 0.4,
+    alpha: Math.random() * 0.6 + 0.3,
+    twinkle: Math.random() * Math.PI * 2,
   }));
 }
 
+// ─── Player ───────────────────────────────────────────────────────────────────
 function makePlayer(w: number, h: number): Player {
   return {
-    x:         w / 2,
-    y:         h - 80,
-    width:     32,
-    height:    36,
-    shield:    SHIELD_MAX,
-    maxShield: SHIELD_MAX,
-    lives:     LIVES_MAX,
-    invincible: 0,
-    doubleShot: 0,
-    rapidFire:  0,
-    hasBomb:    false,
-    shootTimer: 0,
-    baseShootRate: BASE_SHOOT_RATE,
+    x: w / 2, y: h - 90,
+    width: 36, height: 44,
+    shield: 3, maxShield: 3,
+    lives: 3, invincible: 0,
+    bulletLevel: 1,
+    rapidFire: 0, hasBomb: false, hasMissile: false,
+    shootTimer: 0, missileTimer: 0,
+    engineFlame: 1,
   };
 }
 
-function makeEnemy(type: EnemyType, wave: number, canvasW: number): Enemy {
-  const waveScale = 1 + (wave - 1) * 0.15;
+// ─── Enemy factory ────────────────────────────────────────────────────────────
+function makeEnemy(type: EnemyType, wave: number, formX: number, formY: number): Enemy {
+  const w = 1 + (wave - 1) * 0.12;
   const configs: Record<EnemyType, Partial<Enemy>> = {
-    straight: { hp: 1, maxHp: 1, speed: 1.2 * waveScale, color: "#00e5ff", size: 20, points: 10, nova: NOVA_PER_ENEMY, shootCooldown: 0 },
-    zigzag:   { hp: 1, maxHp: 1, speed: 1.0 * waveScale, color: "#ff4081", size: 22, points: 15, nova: NOVA_PER_ENEMY, shootCooldown: 0 },
-    diver:    { hp: 2, maxHp: 2, speed: 2.5 * waveScale, color: "#ffea00", size: 24, points: 20, nova: NOVA_PER_ENEMY + 1, shootCooldown: 0 },
-    shooter:  { hp: 2, maxHp: 2, speed: 0.8 * waveScale, color: "#e040fb", size: 22, points: 25, nova: NOVA_PER_ENEMY + 1, shootCooldown: 120 },
-    circler:  { hp: 3, maxHp: 3, speed: 1.4 * waveScale, color: "#69f0ae", size: 26, points: 30, nova: NOVA_PER_ENEMY + 2, shootCooldown: 80 },
-    boss:     { hp: 40 + wave * 10, maxHp: 40 + wave * 10, speed: 0.6, color: "#ff6d00", size: 50, points: 500, nova: NOVA_BOSS_KILL, shootCooldown: 40 },
+    fighter:  { hp:2,  maxHp:2,  speed:1.4*w, color:"#00e5ff", size:22, points:10,  nova:NOVA_PER_ENEMY,   shootCooldown:200 },
+    heavy:    { hp:5,  maxHp:5,  speed:0.9*w, color:"#ff6d00", size:28, points:25,  nova:NOVA_PER_ENEMY+2, shootCooldown:100 },
+    scout:    { hp:1,  maxHp:1,  speed:2.2*w, color:"#69f0ae", size:16, points:8,   nova:NOVA_PER_ENEMY,   shootCooldown:999 },
+    gunship:  { hp:4,  maxHp:4,  speed:1.0*w, color:"#e040fb", size:26, points:20,  nova:NOVA_PER_ENEMY+1, shootCooldown:70  },
+    boss:     { hp:60+wave*15, maxHp:60+wave*15, speed:0.7, color:"#ff1744", size:56, points:1000, nova:NOVA_BOSS, shootCooldown:35 },
   };
-  const cfg = configs[type];
+  const c = configs[type];
   return {
-    id: nextId(),
-    type,
-    x:    type === "boss" ? canvasW / 2 : Math.random() * (canvasW - 60) + 30,
-    y:    type === "boss" ? -60 : -(Math.random() * 200),
-    hp:   cfg.hp!,
-    maxHp: cfg.maxHp!,
-    speed: cfg.speed!,
+    id: uid(), type,
+    x: formX, y: type === "boss" ? -80 : -(Math.random() * 100 + 80),
+    hp: c.hp!, maxHp: c.maxHp!,
+    speed: c.speed!, color: c.color!,
+    size: c.size!, points: c.points!, nova: c.nova!,
+    shootCooldown: c.shootCooldown!, timer: Math.random() * (c.shootCooldown ?? 100),
+    formX, formY,
     phase: Math.random() * Math.PI * 2,
-    timer: Math.random() * (cfg.shootCooldown ?? 120),
-    shootCooldown: cfg.shootCooldown ?? 999,
-    color: cfg.color!,
-    size:  cfg.size!,
-    points: cfg.points!,
-    nova:  cfg.nova!,
     flashTimer: 0,
+    entered: false,
+    diveTimer: 200 + Math.random() * 300,
+    isDiving: false,
+    diveTargetX: formX, diveTargetY: formY,
   };
 }
 
-function makeBullet(x: number, y: number, vx: number, vy: number, owner: BulletOwner, color: string, damage = 1): Bullet {
-  return { id: nextId(), x, y, vx, vy, owner, color, size: owner === "player" ? 4 : 5, damage };
-}
-
-function makePowerUp(type: PowerUpType, x: number, y: number): PowerUp {
-  return { id: nextId(), type, x, y, vy: 1.5 };
-}
-
-function makeParticles(x: number, y: number, color: string, count: number, speed = 3): Particle[] {
-  return Array.from({ length: count }, () => {
-    const angle = Math.random() * Math.PI * 2;
-    const s = Math.random() * speed + 1;
-    return {
-      id:    nextId(),
-      x, y,
-      vx:    Math.cos(angle) * s,
-      vy:    Math.sin(angle) * s,
-      color,
-      size:  Math.random() * 5 + 2,
-      life:  1,
-      decay: Math.random() * 0.04 + 0.02,
-    };
-  });
-}
-
-function makeFloatText(x: number, y: number, text: string, color: string): FloatText {
-  return { id: nextId(), x, y, text, color, life: 1 };
-}
-
-// ─── Wave definitions ─────────────────────────────────────────────────────────
-
-function spawnWave(wave: number, canvasW: number): Enemy[] {
-  const isBossWave = wave % 5 === 0;
-  if (isBossWave) {
-    return [makeEnemy("boss", wave, canvasW)];
-  }
+// ─── Formation spawner ────────────────────────────────────────────────────────
+function spawnFormation(wave: number, cw: number): Enemy[] {
+  if (wave % 5 === 0) return [makeEnemy("boss", wave, cw / 2, 100)];
 
   const enemies: Enemy[] = [];
-  const count = 5 + wave * 2;
+  const formations: FormationType[] = ["vshape","line","pincer","swarm","wall"];
+  const form = formations[(wave - 1) % formations.length];
+  const typePool: EnemyType[] = wave === 1 ? ["fighter"] :
+    wave === 2 ? ["fighter","scout"] :
+    wave === 3 ? ["fighter","heavy","scout"] :
+    wave === 4 ? ["fighter","heavy","gunship"] :
+    ["fighter","heavy","scout","gunship"];
 
-  const typePool: EnemyType[] = wave === 1
-    ? ["straight", "straight", "straight"]
-    : wave === 2
-    ? ["straight", "zigzag", "straight", "zigzag"]
-    : wave === 3
-    ? ["straight", "zigzag", "shooter", "diver"]
-    : ["straight", "zigzag", "shooter", "diver", "circler"];
+  const randType = () => typePool[Math.floor(Math.random() * typePool.length)];
+  const cx = cw / 2;
 
-  for (let i = 0; i < count; i++) {
-    const type = typePool[Math.floor(Math.random() * typePool.length)];
-    const enemy = makeEnemy(type, wave, canvasW);
-    // Stagger spawn
-    enemy.y = -(i * 60 + Math.random() * 40);
-    enemies.push(enemy);
+  switch (form) {
+    case "vshape": {
+      const rows = Math.min(3 + Math.floor(wave / 2), 5);
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c <= r; c++) {
+          const xOff = (c - r / 2) * 52;
+          enemies.push(makeEnemy(randType(), wave, cx + xOff, 80 + r * 55));
+        }
+      }
+      break;
+    }
+    case "line": {
+      const cols = Math.min(5 + wave, 10);
+      for (let i = 0; i < cols; i++) {
+        const x = (cw - (cols - 1) * 48) / 2 + i * 48;
+        enemies.push(makeEnemy(randType(), wave, x, 90));
+        if (wave >= 3) enemies.push(makeEnemy(randType(), wave, x, 145));
+      }
+      break;
+    }
+    case "pincer": {
+      const side = Math.min(3 + Math.floor(wave / 2), 7);
+      for (let i = 0; i < side; i++) {
+        enemies.push(makeEnemy(randType(), wave, 40 + i * 40, 80 + i * 38));
+        enemies.push(makeEnemy(randType(), wave, cw - 40 - i * 40, 80 + i * 38));
+      }
+      break;
+    }
+    case "swarm": {
+      const count = 8 + wave * 2;
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2;
+        const r = 80 + Math.random() * 60;
+        enemies.push(makeEnemy("scout", wave, cx + Math.cos(angle) * r, 150 + Math.sin(angle) * 40));
+      }
+      break;
+    }
+    case "wall": {
+      const cols = Math.min(4 + Math.floor(wave / 2), 7);
+      const rows2 = 2 + Math.floor(wave / 3);
+      for (let r = 0; r < rows2; r++) {
+        for (let c = 0; c < cols; c++) {
+          const x = (cw - (cols - 1) * 50) / 2 + c * 50;
+          enemies.push(makeEnemy(r === 0 ? "heavy" : randType(), wave, x, 70 + r * 55));
+        }
+      }
+      break;
+    }
   }
   return enemies;
 }
 
+// ─── Bullet factory ───────────────────────────────────────────────────────────
+function spawnPlayerBullets(p: Player): Bullet[] {
+  const bullets: Bullet[] = [];
+  const base = { owner: "player" as BulletOwner, damage: 1, isMissile: false, trail: [] };
+
+  switch (p.bulletLevel) {
+    case 1:
+      bullets.push({ ...base, id: uid(), x: p.x, y: p.y - 26, vx: 0, vy: -15, level: 1, color: "#c084fc", size: 4 });
+      break;
+    case 2:
+      bullets.push({ ...base, id: uid(), x: p.x - 11, y: p.y - 20, vx: 0, vy: -15, level: 2, color: "#a855f7", size: 4 });
+      bullets.push({ ...base, id: uid(), x: p.x + 11, y: p.y - 20, vx: 0, vy: -15, level: 2, color: "#a855f7", size: 4 });
+      break;
+    case 3:
+      bullets.push({ ...base, id: uid(), x: p.x - 12, y: p.y - 18, vx: -0.8, vy: -15, level: 3, color: "#e879f9", size: 5 });
+      bullets.push({ ...base, id: uid(), x: p.x,       y: p.y - 26, vx: 0,    vy: -16, level: 3, color: "#f0abfc", size: 5, damage: 2 });
+      bullets.push({ ...base, id: uid(), x: p.x + 12, y: p.y - 18, vx:  0.8, vy: -15, level: 3, color: "#e879f9", size: 5 });
+      break;
+    case 4:
+      for (let i = -2; i <= 2; i++) {
+        bullets.push({ ...base, id: uid(), x: p.x + i * 13, y: p.y - 20, vx: i * 0.6, vy: -15, level: 4, color: "#fbbf24", size: 5, damage: i === 0 ? 3 : 2 });
+      }
+      break;
+  }
+  return bullets;
+}
+
+function spawnEnemyBullets(e: Enemy, px: number, py: number, wave: number): Bullet[] {
+  const base = { owner: "enemy" as BulletOwner, level: 0, isMissile: false, trail: [], damage: 1 };
+  const dx = px - e.x; const dy = py - e.y;
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+  const spd = 4 + wave * 0.3;
+  const bullets: Bullet[] = [];
+
+  switch (e.type) {
+    case "fighter":
+      bullets.push({ ...base, id: uid(), x: e.x, y: e.y + e.size / 2, vx: 0, vy: spd, color: "#00e5ff", size: 5 });
+      break;
+    case "heavy":
+      // 3-way spread
+      for (let a = -1; a <= 1; a++) {
+        bullets.push({ ...base, id: uid(), x: e.x, y: e.y + e.size / 2, vx: a * spd * 0.5, vy: spd, color: "#ff6d00", size: 6, damage: 2 });
+      }
+      break;
+    case "gunship":
+      // Aimed shot + downward
+      bullets.push({ ...base, id: uid(), x: e.x, y: e.y + e.size / 2, vx: (dx / dist) * spd * 1.1, vy: (dy / dist) * spd * 1.1, color: "#e040fb", size: 6 });
+      break;
+    case "boss": {
+      // Phase 1: 5-way spread
+      for (let a = -2; a <= 2; a++) {
+        bullets.push({ ...base, id: uid(), x: e.x, y: e.y + e.size / 2, vx: a * spd * 0.6, vy: spd * 1.1, color: "#ff1744", size: 7, damage: 2 });
+      }
+      // Aimed shot
+      bullets.push({ ...base, id: uid(), x: e.x, y: e.y + e.size / 2, vx: (dx / dist) * spd * 1.4, vy: (dy / dist) * spd * 1.4, color: "#ff6d00", size: 8, damage: 3 });
+      break;
+    }
+    default:
+      bullets.push({ ...base, id: uid(), x: e.x, y: e.y + e.size / 2, vx: 0, vy: spd, color: e.color, size: 5 });
+  }
+  return bullets;
+}
+
 // ─── Collision ────────────────────────────────────────────────────────────────
-
-function circleRect(cx: number, cy: number, cr: number, rx: number, ry: number, rw: number, rh: number): boolean {
-  const nearX = Math.max(rx, Math.min(cx, rx + rw));
-  const nearY = Math.max(ry, Math.min(cy, ry + rh));
-  const dx = cx - nearX;
-  const dy = cy - nearY;
-  return dx * dx + dy * dy < cr * cr;
+function circ(ax:number,ay:number,ar:number,bx:number,by:number,br:number):boolean {
+  const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy < (ar+br)*(ar+br);
+}
+function circRect(cx:number,cy:number,cr:number,rx:number,ry:number,rw:number,rh:number):boolean {
+  const nx=Math.max(rx,Math.min(cx,rx+rw)), ny=Math.max(ry,Math.min(cy,ry+rh));
+  const dx=cx-nx, dy=cy-ny; return dx*dx+dy*dy < cr*cr;
 }
 
-function circles(ax: number, ay: number, ar: number, bx: number, by: number, br: number): boolean {
-  const dx = ax - bx, dy = ay - by;
-  const r = ar + br;
-  return dx * dx + dy * dy < r * r;
+// ─── Particles ────────────────────────────────────────────────────────────────
+function burst(x:number,y:number,color:string,n:number,spd=4): Particle[] {
+  return Array.from({length:n}, ()=>{
+    const a=Math.random()*Math.PI*2, s=Math.random()*spd+1;
+    return { id:uid(), x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+             color, size:Math.random()*5+2, life:1, decay:Math.random()*0.04+0.02,
+             shape: Math.random()<0.3?"spark":"circle" as "circle"|"spark" };
+  });
+}
+function ring(x:number,y:number,color:string): Particle[] {
+  return [{ id:uid(), x, y, vx:0, vy:0, color, size:10, life:1, decay:0.04, shape:"ring" }];
 }
 
-// ─── Main update function (called every frame) ────────────────────────────────
+function floatText(x:number,y:number,text:string,color:string): FloatText {
+  return { id:uid(), x, y, text, color, life:1, scale:1 };
+}
 
+// ─── Power-up drop ────────────────────────────────────────────────────────────
+function maybeDrop(x:number,y:number,bulletLevel:number): PowerUp|null {
+  if (Math.random() > POWERUP_CHANCE) return null;
+  const pool: [PowerUpType,number][] =
+    bulletLevel < 4
+      ? [["bulletUp",5],["rapidFire",3],["shield",3],["bomb",1],["nova",4],["missile",2]]
+      : [["rapidFire",4],["shield",4],["bomb",2],["nova",5],["missile",3]];
+  let total = pool.reduce((s,[,w])=>s+w,0);
+  let r = Math.random()*total;
+  for (const [t,w] of pool) { r-=w; if (r<=0) return {id:uid(),type:t,x,y,vy:1.8,pulse:0}; }
+  return {id:uid(),type:"nova",x,y,vy:1.8,pulse:0};
+}
+
+// ─── Main update ──────────────────────────────────────────────────────────────
 export function updateGame(
-  state: GameState,
-  canvasW: number,
-  canvasH: number,
-  targetX: number | null,  // player drag target X, null = not dragging
-  useBomb: boolean,
+  state: GameState, cw: number, ch: number,
+  targetX: number|null, useBomb: boolean,
 ): GameState {
   if (state.phase !== "playing") return state;
 
-  // Deep clone mutable arrays
-  let { player, enemies, bullets, powerUps, particles, floatTexts, stars, wave,
-        waveTimer, score, novaEarned, bossActive, waveCleared, totalTime } = state;
-  player     = { ...player };
-  enemies    = enemies.map((e) => ({ ...e }));
-  bullets    = bullets.map((b) => ({ ...b }));
-  powerUps   = powerUps.map((p) => ({ ...p }));
-  particles  = particles.map((p) => ({ ...p }));
-  floatTexts = floatTexts.map((f) => ({ ...f }));
-  stars      = stars.map((s) => ({ ...s }));
+  let { player, enemies, bullets, powerUps, particles, floatTexts, stars,
+        wave, waveTimer, score, novaEarned, bossActive, waveCleared, totalTime,
+        shakeX, shakeY, shakeDuration, flashAlpha, flashColor } = state;
 
-  const newBullets:     Bullet[]    = [];
-  const newParticles:   Particle[]  = [];
-  const newFloatTexts:  FloatText[] = [];
-  const newPowerUps:    PowerUp[]   = [];
+  player    = {...player};
+  enemies   = enemies.map(e=>({...e}));
+  bullets   = bullets.map(b=>({...b}));
+  powerUps  = powerUps.map(p=>({...p}));
+  particles = particles.map(p=>({...p}));
+  floatTexts= floatTexts.map(f=>({...f}));
+  stars     = stars.map(s=>({...s}));
+
+  const newBullets:   Bullet[]   = [];
+  const newParticles: Particle[] = [];
+  const newFloats:    FloatText[]= [];
+  const newPowerUps:  PowerUp[]  = [];
 
   totalTime++;
 
-  // ── Survival NOVA ──────────────────────────────────────────────────────────
-  if (totalTime % NOVA_SURVIVAL_RATE === 0) {
-    novaEarned++;
-  }
+  // Survival NOVA
+  if (totalTime % SURVIVAL_FRAMES === 0) novaEarned++;
 
-  // ── Stars scroll ──────────────────────────────────────────────────────────
+  // Screen shake decay
+  if (shakeDuration > 0) {
+    shakeDuration--;
+    const mag = shakeDuration * 0.3;
+    shakeX = (Math.random()-0.5)*mag*2;
+    shakeY = (Math.random()-0.5)*mag*2;
+  } else { shakeX=0; shakeY=0; }
+
+  // Flash decay
+  flashAlpha = Math.max(0, flashAlpha - 0.06);
+
+  // ── Stars ─────────────────────────────────────────────────────────────────
   for (const s of stars) {
-    s.y += s.speed;
-    if (s.y > canvasH) { s.y = 0; s.x = Math.random() * canvasW; }
+    s.y += s.speed; s.twinkle += 0.05;
+    if (s.y > ch) { s.y=0; s.x=Math.random()*cw; }
   }
 
-  // ── Player movement ────────────────────────────────────────────────────────
+  // ── Player movement ───────────────────────────────────────────────────────
   if (targetX !== null) {
     const dx = targetX - player.x;
-    const move = Math.min(Math.abs(dx), PLAYER_SPEED) * Math.sign(dx);
-    player.x = Math.max(player.width / 2, Math.min(canvasW - player.width / 2, player.x + move));
+    player.x = Math.max(player.width/2, Math.min(cw-player.width/2, player.x + Math.sign(dx)*Math.min(Math.abs(dx), PLAYER_SPEED)));
   }
-
-  // ── Player invincibility countdown ────────────────────────────────────────
+  player.engineFlame = 1 + Math.sin(totalTime * 0.25) * 0.3;
   if (player.invincible > 0) player.invincible--;
-
-  // ── Player power-up countdowns ─────────────────────────────────────────────
-  if (player.doubleShot > 0) player.doubleShot--;
   if (player.rapidFire  > 0) player.rapidFire--;
 
-  // ── Player shooting ────────────────────────────────────────────────────────
+  // ── Player shooting ───────────────────────────────────────────────────────
   player.shootTimer--;
-  const shootRate = player.rapidFire > 0 ? RAPID_SHOOT_RATE : BASE_SHOOT_RATE;
+  const shootRate = SHOOT_RATES[player.bulletLevel] * (player.rapidFire > 0 ? RAPID_MULTIPLIER : 1);
   if (player.shootTimer <= 0) {
     player.shootTimer = shootRate;
-    if (player.doubleShot > 0) {
-      newBullets.push(makeBullet(player.x - 10, player.y - 20, 0, -14, "player", "#a855f7"));
-      newBullets.push(makeBullet(player.x + 10, player.y - 20, 0, -14, "player", "#a855f7"));
-    } else {
-      newBullets.push(makeBullet(player.x, player.y - 20, 0, -14, "player", "#c084fc"));
+    newBullets.push(...spawnPlayerBullets(player));
+  }
+
+  // Missiles
+  if (player.hasMissile) {
+    player.missileTimer--;
+    if (player.missileTimer <= 0) {
+      player.missileTimer = 45;
+      const target = enemies.find(e => e.y > 0);
+      if (target) {
+        newBullets.push({ id:uid(), x:player.x-16, y:player.y-10, vx:-1, vy:-8,
+          owner:"player", level:99, color:"#f59e0b", size:6, damage:5, isMissile:true, targetId:target.id, trail:[] });
+        newBullets.push({ id:uid(), x:player.x+16, y:player.y-10, vx: 1, vy:-8,
+          owner:"player", level:99, color:"#f59e0b", size:6, damage:5, isMissile:true, targetId:target.id, trail:[] });
+      }
     }
   }
 
-  // ── Bomb ───────────────────────────────────────────────────────────────────
+  // ── Bomb ──────────────────────────────────────────────────────────────────
   if (useBomb && player.hasBomb) {
     player.hasBomb = false;
-    // Destroy all enemies on screen
     for (const e of enemies) {
       if (e.y > -e.size) {
-        newParticles.push(...makeParticles(e.x, e.y, e.color, 12, 5));
-        newFloatTexts.push(makeFloatText(e.x, e.y, `+${e.nova}`, "#f59e0b"));
-        novaEarned += e.nova;
-        score      += e.points;
+        newParticles.push(...burst(e.x, e.y, e.color, 15, 6));
+        newParticles.push(...ring(e.x, e.y, e.color));
+        novaEarned += e.nova; score += e.points;
+        newFloats.push(floatText(e.x, e.y, `+${e.nova}`, "#f59e0b"));
       }
     }
     enemies = [];
-    // Big explosion in center
-    newParticles.push(...makeParticles(canvasW / 2, canvasH / 2, "#f59e0b", 40, 8));
+    shakeX=0; shakeY=0; shakeDuration=30;
+    flashAlpha=0.6; flashColor="#ffffff";
+    newParticles.push(...burst(cw/2, ch/2, "#f59e0b", 60, 10));
   }
 
-  // ── Wave spawn / management ────────────────────────────────────────────────
+  // ── Wave management ───────────────────────────────────────────────────────
   if (enemies.length === 0 && !waveCleared) {
-    waveCleared = true;
-    waveTimer   = 120; // 2 seconds between waves
-    const waveBonus = wave * NOVA_PER_WAVE;
-    novaEarned += waveBonus;
-    newFloatTexts.push(makeFloatText(canvasW / 2, canvasH / 2 - 30, `Wave ${wave} Clear! +${waveBonus} NOVA`, "#f59e0b"));
+    waveCleared = true; waveTimer = 140;
+    const bonus = wave * NOVA_WAVE_BASE;
+    novaEarned += bonus;
+    newFloats.push(floatText(cw/2, ch/2-40, `WAVE ${wave} CLEAR  +${bonus} NOVA`, "#f59e0b"));
   }
-
   if (waveCleared) {
     waveTimer--;
     if (waveTimer <= 0) {
-      wave++;
-      bossActive  = wave % 5 === 0;
-      waveCleared = false;
-      enemies.push(...spawnWave(wave, canvasW));
+      wave++; bossActive = wave % 5 === 0; waveCleared = false;
+      const newEnemies = spawnFormation(wave, cw);
+      enemies.push(...newEnemies);
+      if (bossActive) { shakeDuration=20; flashAlpha=0.3; flashColor="#ff1744"; }
     }
   }
 
-  // ── Enemy update ───────────────────────────────────────────────────────────
-  const survivingEnemies: Enemy[] = [];
+  // ── Enemy update ──────────────────────────────────────────────────────────
+  const aliveEnemies: Enemy[] = [];
   for (const e of enemies) {
-    e.flashTimer = Math.max(0, e.flashTimer - 1);
+    e.flashTimer = Math.max(0, e.flashTimer-1);
+    e.phase += e.type==="boss" ? 0.012 : 0.04;
 
-    // Movement patterns
-    switch (e.type) {
-      case "straight":
-        e.y += e.speed;
-        break;
-      case "zigzag":
-        e.y   += e.speed;
-        e.phase += 0.05;
-        e.x   += Math.sin(e.phase) * 2.5;
-        e.x    = Math.max(e.size, Math.min(canvasW - e.size, e.x));
-        break;
-      case "diver":
-        // Accelerates toward player
-        e.y += e.speed * (1 + e.phase * 0.1);
-        e.phase = Math.min(e.phase + 0.02, 3);
-        break;
-      case "shooter":
-        e.y   += e.speed;
-        e.phase += 0.02;
-        e.x   += Math.sin(e.phase * 0.5) * 1.5;
-        e.x    = Math.max(e.size, Math.min(canvasW - e.size, e.x));
-        break;
-      case "circler":
-        e.y   += e.speed * 0.5;
-        e.phase += 0.04;
-        e.x   += Math.sin(e.phase) * 3;
-        e.x    = Math.max(e.size, Math.min(canvasW - e.size, e.x));
-        break;
-      case "boss":
-        // Enter from top, then patrol side to side
-        if (e.y < 80) {
-          e.y += 1.5;
-        } else {
-          e.phase += 0.01;
-          e.x = canvasW / 2 + Math.sin(e.phase) * (canvasW * 0.38);
-        }
-        break;
-    }
-
-    // Enemy shooting
-    if (e.shootCooldown < 999 && e.y > 0) {
-      e.timer--;
-      if (e.timer <= 0) {
-        e.timer = e.shootCooldown;
-        const dx = state.player.x - e.x;
-        const dy = state.player.y - e.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-
-        if (e.type === "boss") {
-          // Boss fires 3-way spread + aimed shot
-          for (let i = -1; i <= 1; i++) {
-            newBullets.push(makeBullet(e.x, e.y + e.size, i * 2, 5, "enemy", "#ff6d00", 1));
-          }
-          newBullets.push(makeBullet(e.x, e.y + e.size, (dx / dist) * 4, (dy / dist) * 4, "enemy", "#ff0000", 2));
-        } else if (e.type === "circler") {
-          // Fires aimed shot
-          newBullets.push(makeBullet(e.x, e.y + e.size / 2, (dx / dist) * 3.5, (dy / dist) * 3.5, "enemy", e.color));
-        } else {
-          // Straight down
-          newBullets.push(makeBullet(e.x, e.y + e.size / 2, 0, 4.5, "enemy", e.color));
-        }
+    if (!e.entered) {
+      // Move toward formation position
+      const dx = e.formX - e.x, dy = e.formY - e.y;
+      const dist = Math.sqrt(dx*dx+dy*dy)||1;
+      const spd = Math.min(e.speed*2, dist);
+      e.x += (dx/dist)*spd; e.y += (dy/dist)*spd;
+      if (dist < 4) { e.x=e.formX; e.y=e.formY; e.entered=true; }
+    } else if (e.isDiving) {
+      // Dive attack toward player
+      const dx=e.diveTargetX-e.x, dy=e.diveTargetY-e.y;
+      const dist=Math.sqrt(dx*dx+dy*dy)||1;
+      e.x += (dx/dist)*e.speed*2.2;
+      e.y += (dy/dist)*e.speed*2.2;
+      if (e.y > ch + e.size*2) { e.isDiving=false; e.y=e.formY-100; e.entered=false; }
+    } else {
+      // Formation idle movement
+      if (e.type==="boss") {
+        e.x = cw/2 + Math.sin(e.phase)*cw*0.36;
+        e.y = Math.max(e.formY, e.y + (e.formY-e.y)*0.02);
+      } else {
+        e.x = e.formX + Math.sin(e.phase + e.id*0.7)*18;
+        e.y = e.formY + Math.cos(e.phase*0.6)*8;
+      }
+      // Random dive
+      e.diveTimer--;
+      if (e.diveTimer <= 0 && e.type !== "boss" && e.type !== "heavy") {
+        e.isDiving=true; e.diveTimer=300+Math.random()*300;
+        e.diveTargetX = state.player.x + (Math.random()-0.5)*80;
+        e.diveTargetY = ch+60;
       }
     }
 
-    // Remove if off-screen bottom
-    if (e.y > canvasH + e.size * 2) {
-      // Enemy escaped — minor penalty
-      continue;
+    // Shooting
+    if (e.y > 20 && e.shootCooldown < 900) {
+      e.timer--;
+      if (e.timer <= 0) {
+        e.timer = e.shootCooldown * (0.7 + Math.random()*0.6);
+        newBullets.push(...spawnEnemyBullets(e, player.x, player.y, wave));
+      }
     }
-    survivingEnemies.push(e);
+
+    if (e.y < ch + e.size*3) aliveEnemies.push(e);
   }
 
-  // ── Bullet update + collision ──────────────────────────────────────────────
-  const survivingBullets: Bullet[] = [];
+  // ── Bullet update + collision ─────────────────────────────────────────────
+  const aliveBullets: Bullet[] = [];
   for (const b of [...bullets, ...newBullets]) {
-    b.x += b.vx;
-    b.y += b.vy;
+    // Missile homing
+    if (b.isMissile && b.targetId) {
+      const tgt = aliveEnemies.find(e=>e.id===b.targetId);
+      if (tgt) {
+        const dx=tgt.x-b.x, dy=tgt.y-b.y, dist=Math.sqrt(dx*dx+dy*dy)||1;
+        b.vx += (dx/dist)*1.2; b.vy += (dy/dist)*1.2;
+        const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);
+        if (spd>14){b.vx=(b.vx/spd)*14;b.vy=(b.vy/spd)*14;}
+      }
+    }
 
-    // Off-screen
-    if (b.y < -20 || b.y > canvasH + 20 || b.x < -20 || b.x > canvasW + 20) continue;
+    // Trail
+    b.trail = [{x:b.x,y:b.y}, ...b.trail.slice(0,5)];
+    b.x += b.vx; b.y += b.vy;
 
+    if (b.y < -30||b.y > ch+30||b.x < -30||b.x > cw+30) continue;
     let hit = false;
 
-    if (b.owner === "player") {
-      // Check enemy collisions
-      for (const e of survivingEnemies) {
-        if (circles(b.x, b.y, b.size, e.x, e.y, e.size * 0.85)) {
-          e.hp -= b.damage;
-          e.flashTimer = 6;
-          hit = true;
+    if (b.owner==="player") {
+      for (const e of aliveEnemies) {
+        if (circ(b.x,b.y,b.size+2,e.x,e.y,e.size*0.82)) {
+          e.hp -= b.damage; e.flashTimer=8; hit=true;
+          newParticles.push(...burst(b.x,b.y,e.color,4,2));
 
-          if (e.hp <= 0) {
-            // Enemy killed
-            newParticles.push(...makeParticles(e.x, e.y, e.color, e.type === "boss" ? 30 : 12, e.type === "boss" ? 7 : 4));
-            newFloatTexts.push(makeFloatText(e.x, e.y - 10, `+${e.nova}`, "#f59e0b"));
-            novaEarned += e.nova;
-            score      += e.points;
-
-            // Power-up drop
-            if (e.type !== "boss" && Math.random() < POWERUP_CHANCE) {
-              const types: PowerUpType[] = ["doubleShot", "rapidFire", "shield", "bomb", "nova"];
-              const weights              = [3, 3, 3, 1, 4]; // weighted random
-              let total = weights.reduce((a, c) => a + c, 0);
-              let r = Math.random() * total;
-              let pType: PowerUpType = "nova";
-              for (let i = 0; i < types.length; i++) {
-                r -= weights[i];
-                if (r <= 0) { pType = types[i]; break; }
-              }
-              newPowerUps.push(makePowerUp(pType, e.x, e.y));
-            } else if (e.type === "boss") {
-              // Boss always drops multiple power-ups
-              newPowerUps.push(makePowerUp("shield",     e.x - 40, e.y));
-              newPowerUps.push(makePowerUp("nova",       e.x,      e.y));
-              newPowerUps.push(makePowerUp("doubleShot", e.x + 40, e.y));
-              newFloatTexts.push(makeFloatText(e.x, e.y - 40, `BOSS DOWN! +${NOVA_BOSS_KILL} NOVA`, "#ff6d00"));
-              novaEarned += NOVA_BOSS_KILL;
-            }
+          if (e.hp<=0) {
+            const isB=e.type==="boss";
+            newParticles.push(...burst(e.x,e.y,e.color,isB?40:14,isB?8:5));
+            newParticles.push(...ring(e.x,e.y,e.color));
+            if (isB) { newParticles.push(...burst(e.x,e.y,"#ffffff",20,6)); }
+            newFloats.push(floatText(e.x,e.y-8,`+${e.nova}`,isB?"#ff6d00":"#f59e0b"));
+            novaEarned += e.nova; score += e.points;
+            if (isB) { shakeDuration=40; flashAlpha=0.5; flashColor="#ff6d00"; }
+            const drop = maybeDrop(e.x,e.y,player.bulletLevel);
+            if (drop) newPowerUps.push(drop);
           }
           break;
         }
       }
     } else {
-      // Enemy bullet hits player
-      if (player.invincible === 0 &&
-          circleRect(b.x, b.y, b.size + 2, player.x - player.width / 2, player.y - player.height / 2, player.width, player.height)) {
-        hit = true;
-        player.invincible = 90; // 1.5s invincibility
-
-        if (player.shield > 0) {
-          player.shield -= b.damage;
-          newParticles.push(...makeParticles(player.x, player.y, "#3b82f6", 8, 3));
-          newFloatTexts.push(makeFloatText(player.x, player.y - 20, "Shield!", "#3b82f6"));
+      if (player.invincible===0 &&
+          circRect(b.x,b.y,b.size+3,player.x-player.width/2,player.y-player.height/2,player.width,player.height)) {
+        hit=true; player.invincible=90;
+        newParticles.push(...burst(player.x,player.y,"#3b82f6",10,4));
+        if (player.shield>0) {
+          player.shield -= b.damage; if(player.shield<0)player.shield=0;
+          newFloats.push(floatText(player.x,player.y-24,"SHIELD!","#60a5fa"));
         } else {
           player.lives--;
-          newParticles.push(...makeParticles(player.x, player.y, "#ef4444", 15, 5));
-          newFloatTexts.push(makeFloatText(player.x, player.y - 20, "HIT!", "#ef4444"));
+          shakeDuration=18; flashAlpha=0.45; flashColor="#ef4444";
+          newFloats.push(floatText(player.x,player.y-24,"HIT!","#ef4444"));
+          if(player.lives<=0){
+            return {...state, phase:"gameover", score, novaEarned, wave, player,
+              enemies:aliveEnemies, bullets:aliveBullets, powerUps,
+              particles:[...particles,...newParticles].map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-p.decay})).filter(p=>p.life>0),
+              floatTexts:[...floatTexts,...newFloats], stars, bossActive, waveCleared, totalTime,
+              shakeX,shakeY,shakeDuration,flashAlpha,flashColor};
+          }
         }
       }
     }
-
-    if (!hit) survivingBullets.push(b);
+    if (!hit) aliveBullets.push(b);
   }
 
-  // Remove dead enemies after bullet loop (need the array intact during bullet checks)
-  const aliveEnemies = survivingEnemies.filter((e) => e.hp > 0);
+  // Remove dead enemies
+  const finalEnemies = aliveEnemies.filter(e=>e.hp>0);
 
-  // ── Power-up update + collection ──────────────────────────────────────────
-  const survivingPowerUps: PowerUp[] = [];
-  for (const p of [...powerUps, ...newPowerUps]) {
-    p.y += p.vy;
-    if (p.y > canvasH + 30) continue;
-
-    // Check player collection
-    if (circles(p.x, p.y, 15, player.x, player.y, player.width)) {
-      // Apply power-up
-      switch (p.type) {
-        case "doubleShot": player.doubleShot = 300; break;
-        case "rapidFire":  player.rapidFire  = 300; break;
-        case "shield":     player.shield = Math.min(player.maxShield, player.shield + 1); break;
-        case "bomb":       player.hasBomb = true; break;
-        case "nova":
-          novaEarned += NOVA_COIN_VALUE;
-          newFloatTexts.push(makeFloatText(p.x, p.y, `+${NOVA_COIN_VALUE} NOVA`, "#f59e0b"));
-          break;
-      }
-      if (p.type !== "nova") {
-        const labels: Record<PowerUpType, string> = { doubleShot: "Double Shot!", rapidFire: "Rapid Fire!", shield: "Shield +1", bomb: "Bomb Ready!", nova: "" };
-        newFloatTexts.push(makeFloatText(p.x, p.y, labels[p.type], "#10b981"));
+  // ── Power-up update ───────────────────────────────────────────────────────
+  const alivePowerUps: PowerUp[] = [];
+  for (const p of [...powerUps,...newPowerUps]) {
+    p.y += p.vy; p.pulse += 0.1;
+    if (p.y > ch+30) continue;
+    if (circ(p.x,p.y,18,player.x,player.y,player.width*0.6)) {
+      const labels: Record<PowerUpType,string> = {
+        bulletUp:"POWER UP!",rapidFire:"RAPID FIRE!",shield:"SHIELD +1",
+        bomb:"BOMB!",nova:`+${NOVA_COIN} NOVA`,missile:"MISSILES!"
+      };
+      newFloats.push(floatText(p.x,p.y-10,labels[p.type],"#10b981"));
+      switch(p.type){
+        case "bulletUp":  player.bulletLevel=Math.min(4,player.bulletLevel+1); break;
+        case "rapidFire": player.rapidFire=360; break;
+        case "shield":    player.shield=Math.min(player.maxShield,player.shield+1); break;
+        case "bomb":      player.hasBomb=true; break;
+        case "missile":   player.hasMissile=true; player.missileTimer=10; break;
+        case "nova":      novaEarned+=NOVA_COIN; break;
       }
       continue;
     }
-    survivingPowerUps.push(p);
+    alivePowerUps.push(p);
   }
 
-  // ── Particle update ────────────────────────────────────────────────────────
-  const aliveParticles = [...particles, ...newParticles]
-    .map((p) => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.1, life: p.life - p.decay }))
-    .filter((p) => p.life > 0);
-
-  // ── Float text update ──────────────────────────────────────────────────────
-  const aliveFloats = [...floatTexts, ...newFloatTexts]
-    .map((f) => ({ ...f, y: f.y - 1.2, life: f.life - 0.025 }))
-    .filter((f) => f.life > 0);
-
-  // ── Game over check ────────────────────────────────────────────────────────
-  if (player.lives <= 0) {
-    return {
-      ...state,
-      phase:      "gameover",
-      score,
-      novaEarned,
-      wave,
-      waveTimer,
-      player,
-      enemies:    aliveEnemies,
-      bullets:    survivingBullets,
-      powerUps:   survivingPowerUps,
-      particles:  aliveParticles,
-      floatTexts: aliveFloats,
-      stars,
-      bossActive,
-      waveCleared,
-      totalTime,
-    };
-  }
+  // ── Particle + float update ───────────────────────────────────────────────
+  const aliveParticles = [...particles,...newParticles]
+    .map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.08,size:p.size*(p.shape==="ring"?1.12:1),life:p.life-p.decay}))
+    .filter(p=>p.life>0);
+  const aliveFloats = [...floatTexts,...newFloats]
+    .map(f=>({...f,y:f.y-1.4,life:f.life-0.022,scale:1+0.3*(1-f.life)}))
+    .filter(f=>f.life>0);
 
   return {
-    ...state,
-    phase:      "playing",
-    score,
-    novaEarned,
-    wave,
-    waveTimer,
-    player,
-    enemies:    aliveEnemies,
-    bullets:    survivingBullets,
-    powerUps:   survivingPowerUps,
-    particles:  aliveParticles,
-    floatTexts: aliveFloats,
-    stars,
-    bossActive,
-    waveCleared,
-    totalTime,
+    ...state, phase:"playing", score, novaEarned, wave, waveTimer,
+    player, enemies:finalEnemies, bullets:aliveBullets,
+    powerUps:alivePowerUps, particles:aliveParticles,
+    floatTexts:aliveFloats, stars, bossActive, waveCleared, totalTime,
+    shakeX, shakeY, shakeDuration, flashAlpha, flashColor,
   };
 }
 
-// ─── Initial state factory ────────────────────────────────────────────────────
-
-export function createInitialState(canvasW: number, canvasH: number): GameState {
+// ─── State factories ──────────────────────────────────────────────────────────
+export function createInitialState(cw: number, ch: number): GameState {
   return {
-    phase:       "idle",
-    score:       0,
-    novaEarned:  0,
-    wave:        0,
-    waveTimer:   0,
-    player:      makePlayer(canvasW, canvasH),
-    enemies:     [],
-    bullets:     [],
-    powerUps:    [],
-    particles:   [],
-    floatTexts:  [],
-    stars:       makeStars(80, canvasW, canvasH),
-    bossActive:  false,
-    waveCleared: false,
-    totalTime:   0,
+    phase:"idle", score:0, novaEarned:0, wave:0, waveTimer:0,
+    player:makePlayer(cw,ch), enemies:[], bullets:[], powerUps:[],
+    particles:[], floatTexts:[], stars:makeStars(100,cw,ch),
+    bossActive:false, waveCleared:false, totalTime:0,
+    shakeX:0, shakeY:0, shakeDuration:0, flashAlpha:0, flashColor:"#ffffff",
   };
 }
-
-export function startGame(state: GameState, canvasW: number, canvasH: number): GameState {
-  const fresh = createInitialState(canvasW, canvasH);
-  const enemies = spawnWave(1, canvasW);
-  return { ...fresh, phase: "playing", wave: 1, enemies };
+export function startGame(cw: number, ch: number): GameState {
+  const s = createInitialState(cw, ch);
+  return { ...s, phase:"playing", wave:1, enemies:spawnFormation(1, cw) };
 }
